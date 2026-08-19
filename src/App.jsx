@@ -596,18 +596,18 @@ export default function App() {
         {weather.status === "ok" && (
           <div style={{ paddingTop: rainAlert ? 18 : 32, paddingBottom: 4, position: "relative" }}>
             <div
-              style={{
-                fontFamily: TOKENS.fontDisplay,
-                fontSize: 110,
-                lineHeight: 1,
-                color: TOKENS.rule,
-                position: "absolute",
-                right: -6,
-                top: 14,
-                userSelect: "none",
-              }}
+            style={{
+               fontFamily: TOKENS.fontDisplay,
+               fontSize: 110,
+               lineHeight: 1,
+               color: TOKENS.fg,
+               position: "absolute",
+               right: -6,
+               top: 14,
+               userSelect: "none",
+               }}
             >
-              {weatherSymbol(weather.weatherCode, weather.pop, new Date().getHours())}
+               {weatherSymbol(weather.weatherCode, weather.pop, new Date().getHours())}
             </div>
             {alerts.length > 0 && (
               <div
