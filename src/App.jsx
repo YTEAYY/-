@@ -348,7 +348,7 @@ function SectionToggle({ label, count, open, onClick }) {
         style={{
           fontFamily: TOKENS.fontDisplay,
           fontSize: 16,
-          color: TOKENS.fgDim,
+          color: TOKENS.fg,
           display: "inline-block",
           transform: open ? "rotate(90deg)" : "none",
           transition: "transform 0.15s",
@@ -369,7 +369,7 @@ function FeelingMark({ feeling, active, size = 14 }) {
         fontFamily: TOKENS.fontDisplay,
         fontSize: size,
         fontWeight: 700,
-        color: active ? TOKENS.accent : TOKENS.fgMid,
+        color: active ? TOKENS.accent : TOKENS.fg,
         lineHeight: 1,
       }}
     >
@@ -617,7 +617,7 @@ export default function App() {
                   top: 88,
                   display: "flex",
                   gap: 6,
-                  color: TOKENS.fgDim,
+                  color: TOKENS.fg,
                   fontFamily: TOKENS.fontDisplay,
                   fontSize: 19,
                   lineHeight: 1,
@@ -917,7 +917,7 @@ export default function App() {
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
               <button
                 onClick={() => setMonthCursor(new Date(year, month - 1, 1))}
-                style={{ background: "none", border: "none", color: TOKENS.fgDim, fontFamily: TOKENS.fontDisplay, fontSize: 16, cursor: "pointer", padding: 4 }}
+                style={{ background: "none", border: "none", color: TOKENS.fg, fontFamily: TOKENS.fontDisplay, fontSize: 16, cursor: "pointer", padding: 4 }}
                 aria-label="이전 달"
               >
                 ‹
@@ -927,7 +927,7 @@ export default function App() {
               </span>
               <button
                 onClick={() => setMonthCursor(new Date(year, month + 1, 1))}
-                style={{ background: "none", border: "none", color: TOKENS.fgDim, fontFamily: TOKENS.fontDisplay, fontSize: 16, cursor: "pointer", padding: 4 }}
+                style={{ background: "none", border: "none", color: TOKENS.fg, fontFamily: TOKENS.fontDisplay, fontSize: 16, cursor: "pointer", padding: 4 }}
                 aria-label="다음 달"
               >
                 ›
