@@ -62,7 +62,7 @@ const OUTFIT_BASE = {
   cold: { top: "히트텍 + 니트", bottom: "기모 팬츠", outer: "롱패딩 또는 두꺼운 코트", shoes: "부츠", acc: "목도리, 장갑, 비니" },
 };
 
-function outfitFor(temp, feels, pop, humidity, wind, profile = {}) {
+function outfitFor(temp, feels, pop, humidity, wind, profile = {}, aqi = null) {
   let band;
   if (feels >= 29) band = "boiling";
   else if (feels >= 24) band = "hot";
@@ -74,6 +74,7 @@ function outfitFor(temp, feels, pop, humidity, wind, profile = {}) {
   const outfit = { ...OUTFIT_BASE[band] };
   const tips = [];
   const flags = {};
+  const profileNotes = [];
 
   if (pop >= 50) {
     outfit.shoes = "방수 스니커즈 또는 워커 (가죽 신발 비추천)";
@@ -105,29 +106,47 @@ function outfitFor(temp, feels, pop, humidity, wind, profile = {}) {
   const age = Number(profile.age);
   const health = profile.health || [];
   if (age > 0 && (age <= 12 || age >= 65)) {
-    if (band === "boiling" || band === "hot") tips.push("기온에 민감할 수 있는 연령대예요. 한낮 야외 활동은 줄이고 물을 자주 마셔요.");
+    if (band === "boiling" || band === "hot") {
+      tips.push("기온에 민감할 수 있는 연령대예요. 한낮 야외 활동은 줄이고 물을 자주 마셔요.");
+      profileNotes.push("나이");
+    }
     if (band === "cool" || band === "cold") {
       outfit.outer = outfit.outer === "겉옷 없이" ? "가벼운 보온 겉옷" : `${outfit.outer} (보온성 우선)`;
       flags.outer = "MUST";
       tips.push("추위에 민감할 수 있는 연령대라 목과 손을 따뜻하게 보호하면 좋아요.");
+      profileNotes.push("나이");
     }
   }
+  // 호흡기 민감: 춥거나 바람이 강할 때뿐 아니라, 오늘 미세먼지가 나쁜 날에도 반영
+  const badAir = aqi && (aqi.label === "나쁨" || aqi.label === "매우나쁨");
   if (health.includes("respiratory") && (band === "cool" || band === "cold" || wind >= 8)) {
     outfit.acc = "마스크 또는 목을 덮는 스카프";
     flags.acc = "MUST";
     tips.push("호흡기가 예민하다면 차갑고 강한 바람을 직접 맞지 않도록 목과 코를 가려주세요.");
+    profileNotes.push("호흡기 민감");
+  }
+  if (health.includes("respiratory") && badAir) {
+    outfit.acc = "마스크 (미세먼지 " + aqi.label + ")";
+    flags.acc = "MUST";
+    tips.push(`오늘 미세먼지가 ${aqi.label} 수준이에요. 호흡기가 예민하다면 마스크를 꼭 착용하세요.`);
+    if (!profileNotes.includes("호흡기 민감")) profileNotes.push("호흡기 민감");
   }
   if (health.includes("cardiovascular") && (band === "boiling" || band === "hot" || band === "cold")) {
     tips.push("기온 변화에 주의가 필요한 상태라 무리한 야외 활동을 피하고 체온을 천천히 조절하세요.");
+    profileNotes.push("심혈관 주의");
   }
   if (health.includes("skin")) {
     outfit.acc = band === "boiling" || band === "hot" ? "자외선 차단제, 통풍 좋은 모자" : outfit.acc;
     tips.push("피부가 예민하다면 까슬한 소재보다 부드럽고 통풍되는 소재를 골라보세요.");
+    profileNotes.push("피부 민감");
   }
-  if (health.includes("coldSensitive") && (band === "mild" || band === "cool" || band === "cold")) {
-    outfit.outer = outfit.outer === "겉옷 없이" ? "가벼운 보온 겉옷" : `${outfit.outer} (보온성 우선)`;
-    flags.outer = "MUST";
+  if (health.includes("coldSensitive") && (band === "warm" || band === "mild" || band === "cool" || band === "cold")) {
+    if (band !== "warm") {
+      outfit.outer = outfit.outer === "겉옷 없이" ? "가벼운 보온 겉옷" : `${outfit.outer} (보온성 우선)`;
+      flags.outer = "MUST";
+    }
     tips.push("추위를 많이 타는 편이면 체감온도보다 한 겹 더 챙기는 게 좋아요.");
+    profileNotes.push("추위 민감");
   }
 
   const items = CATEGORY_ORDER.filter((cat) => outfit[cat] && outfit[cat] !== "겉옷 없이").map((cat) => ({
@@ -137,7 +156,7 @@ function outfitFor(temp, feels, pop, humidity, wind, profile = {}) {
     flag: flags[cat],
   }));
 
-  return { band, ...BAND_META[band], outfit, items, tips };
+  return { band, ...BAND_META[band], outfit, items, tips, profileNotes: [...new Set(profileNotes)] };
 }
 
 const MIN_RECORDS_FOR_ANALYSIS = 3;
@@ -212,6 +231,20 @@ function aqiInfo(pm10, pm25) {
   const labels = ["좋음", "보통", "나쁨", "매우나쁨"];
   const colors = [TOKENS.accent, TOKENS.fgMid, "#e2984c", "#e0524c"];
   return { label: labels[g], color: colors[g] };
+}
+
+// 도시 이름으로 위경도 검색 (API 키 불필요, Open-Meteo 지오코딩)
+async function searchCity(query) {
+  if (!query || query.trim().length < 1) return [];
+  try {
+    const res = await fetch(
+      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query.trim())}&count=8&language=ko&format=json`
+    );
+    const data = await res.json();
+    return data.results || [];
+  } catch (e) {
+    return [];
+  }
 }
 
 async function reverseGeocode(lat, lon) {
@@ -396,6 +429,7 @@ export default function App() {
   const [hourRange, setHourRange] = useState(8);
   const [selectedHour, setSelectedHour] = useState(0);
   const [showTomorrow, setShowTomorrow] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const hourlyScrollRef = useRef(null);
   const hourlyDragRef = useRef({ active: false, startX: 0, scrollLeft: 0 });
 
@@ -504,8 +538,8 @@ export default function App() {
   for (let i = 0; i < firstWeekday; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
 
-  const rec = weather.status === "ok" ? outfitFor(weather.temp, weather.feels, weather.pop, weather.humidity, weather.wind, profile) : null;
   const aqi = weather.status === "ok" ? aqiInfo(weather.pm10, weather.pm25) : null;
+  const rec = weather.status === "ok" ? outfitFor(weather.temp, weather.feels, weather.pop, weather.humidity, weather.wind, profile, aqi) : null;
   const analysis = analyzeRecords(records);
   const displayedHourly = showTomorrow ? weather.tomorrowHourly : weather.hourly;
   const visibleHourRange = showTomorrow ? displayedHourly?.length ?? 0 : hourRange;
@@ -540,25 +574,34 @@ export default function App() {
             padding: "24px 0 14px",
           }}
         >
-          <button
-            onClick={requestLocation}
-            style={{
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              padding: 0,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-            }}
-          >
-            <span style={{ fontFamily: TOKENS.fontDisplay, fontSize: 13, letterSpacing: "0.12em", color: TOKENS.fgDim }}>
-              {weather.place?.toString().toUpperCase()} · KR
-            </span>
-            <span className={weather.status === "loading" ? "ootd-spin" : ""} style={{ fontSize: 11, color: TOKENS.fgDim }}>
-              {weather.status === "loading" ? "◌" : "↻"}
-            </span>
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <button
+              onClick={requestLocation}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: 0,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              <span style={{ fontFamily: TOKENS.fontDisplay, fontSize: 13, letterSpacing: "0.12em", color: TOKENS.fgDim }}>
+                {weather.place?.toString().toUpperCase()}
+              </span>
+              <span className={weather.status === "loading" ? "ootd-spin" : ""} style={{ fontSize: 11, color: TOKENS.fgDim }}>
+                {weather.status === "loading" ? "◌" : "↻"}
+              </span>
+            </button>
+            <button
+              onClick={() => setSearchOpen(true)}
+              style={{ background: "none", border: "none", cursor: "pointer", padding: 0, fontSize: 13, color: TOKENS.fgDim }}
+              aria-label="지역 검색"
+            >
+              ⌕
+            </button>
+          </div>
           <span style={{ fontFamily: TOKENS.fontDisplay, fontSize: 13, letterSpacing: "0.08em", color: TOKENS.fgDim }}>
             {todayLabel}
           </span>
@@ -718,7 +761,31 @@ export default function App() {
             {/* ===== Hourly ===== */}
             {displayedHourly && displayedHourly.length > 0 && (
               <div style={{ marginTop: 18 }}>
-                {showTomorrow && <Eyebrow style={{ marginBottom: 8, color: TOKENS.fgMid }}>내일 날씨</Eyebrow>}
+                {showTomorrow && (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                    <Eyebrow style={{ color: TOKENS.fgMid }}>내일 날씨</Eyebrow>
+                    <button
+                      onClick={() => {
+                        setShowTomorrow(false);
+                        setHourRange(8);
+                        setSelectedHour(0);
+                        hourlyScrollRef.current?.scrollTo({ left: 0 });
+                      }}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        color: TOKENS.accent,
+                        fontFamily: TOKENS.fontDisplay,
+                        fontSize: 11,
+                        letterSpacing: "0.04em",
+                        cursor: "pointer",
+                        padding: 0,
+                      }}
+                    >
+                      ‹ 오늘 날씨로
+                    </button>
+                  </div>
+                )}
                 <div
                   ref={hourlyScrollRef}
                   onPointerDown={startHourlyDrag}
@@ -831,6 +898,21 @@ export default function App() {
               </div>
               <Eyebrow style={{ whiteSpace: "nowrap", flexShrink: 0, marginLeft: 12 }}>TODAY'S PICK</Eyebrow>
             </div>
+
+            {rec.profileNotes.length > 0 && (
+              <div
+                style={{
+                  fontFamily: TOKENS.fontDisplay,
+                  fontSize: 11.5,
+                  letterSpacing: "0.04em",
+                  color: TOKENS.accent,
+                  marginTop: -14,
+                  marginBottom: 20,
+                }}
+              >
+                ◆ 오늘 프로필 반영됨: {rec.profileNotes.join(" · ")}
+              </div>
+            )}
 
             <div>
               {rec.items.map((item, i) => (
@@ -1044,6 +1126,116 @@ export default function App() {
           }}
         />
       )}
+      {searchOpen && (
+        <LocationSearchSheet
+          onClose={() => setSearchOpen(false)}
+          onSelect={(place) => {
+            fetchAll(place.latitude, place.longitude, (place.name || "").toUpperCase(), false);
+            setSearchOpen(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function LocationSearchSheet({ onClose, onSelect }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+
+  useEffect(() => {
+    if (query.trim().length < 1) {
+      setResults([]);
+      return;
+    }
+    setSearching(true);
+    const timer = setTimeout(() => {
+      searchCity(query).then((r) => {
+        setResults(r);
+        setSearching(false);
+      });
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  return (
+    <div
+      className="ootd-scope"
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 50 }}
+      onClick={onClose}
+    >
+      <div
+        onClick={(event) => event.stopPropagation()}
+        style={{
+          background: TOKENS.bgRaised,
+          borderTop: `1px solid ${TOKENS.rule}`,
+          width: "100%",
+          maxWidth: 430,
+          padding: "22px 22px 30px",
+          maxHeight: "80vh",
+          overflowY: "auto",
+          fontFamily: TOKENS.fontBody,
+          color: TOKENS.fg,
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 18 }}>
+          <div>
+            <Eyebrow>SEARCH LOCATION</Eyebrow>
+            <div style={{ fontFamily: TOKENS.fontDisplay, fontSize: 24, fontWeight: 700, marginTop: 4 }}>지역 검색</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: TOKENS.fgDim, cursor: "pointer", fontSize: 22, lineHeight: 1, padding: 4 }} aria-label="닫기">×</button>
+        </div>
+
+        <input
+          type="text"
+          autoFocus
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="도시 이름을 입력하세요 (예: 부산, 파리, 도쿄)"
+          style={{
+            width: "100%",
+            background: "none",
+            border: "none",
+            borderBottom: `1px solid ${TOKENS.rule}`,
+            color: TOKENS.fg,
+            padding: "8px 0",
+            fontSize: 15,
+            fontFamily: TOKENS.fontBody,
+            marginBottom: 18,
+          }}
+        />
+
+        {searching && <Eyebrow>검색 중...</Eyebrow>}
+
+        {!searching && query.trim().length > 0 && results.length === 0 && (
+          <Eyebrow>검색 결과가 없어요</Eyebrow>
+        )}
+
+        <div>
+          {results.map((r, i) => (
+            <button
+              key={i}
+              onClick={() => onSelect(r)}
+              style={{
+                width: "100%",
+                textAlign: "left",
+                background: "none",
+                border: "none",
+                borderTop: `1px solid ${TOKENS.rule}`,
+                padding: "14px 0",
+                cursor: "pointer",
+                color: TOKENS.fg,
+              }}
+            >
+              <div style={{ fontSize: 15, fontWeight: 500 }}>{r.name}</div>
+              <div style={{ fontFamily: TOKENS.fontDisplay, fontSize: 11.5, color: TOKENS.fgDim, letterSpacing: "0.04em", marginTop: 2 }}>
+                {[r.admin1, r.country].filter(Boolean).join(" · ")}
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
