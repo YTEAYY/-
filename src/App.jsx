@@ -18,6 +18,7 @@ const TOKENS = {
 const SEOUL = { lat: 37.5665, lon: 126.978, name: "SEOUL" };
 const STORAGE_KEY = "ootd-records-v1";
 const PROFILE_KEY = "ootd-profile-v1";
+const FAVORITES_KEY = "ootd-favorites-v1";
 
 const WEEK_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
 
@@ -159,6 +160,36 @@ function outfitFor(temp, feels, pop, humidity, wind, profile = {}, aqi = null) {
   return { band, ...BAND_META[band], outfit, items, tips, profileNotes: [...new Set(profileNotes)] };
 }
 
+// 오늘의 코디 카드를 공유 가능한 텍스트로 만든다.
+function outfitShareText(rec, weather, place) {
+  const lines = [
+    `오늘 뭐 입지? · ${place}`,
+    `${Math.round(weather.temp)}° (체감 ${Math.round(weather.feels)}°) · ${rec.headline}`,
+    "",
+    ...rec.items.map((item) => `${item.label}: ${item.item}`),
+  ];
+  return lines.join("\n");
+}
+
+async function shareOutfit(rec, weather, place, onFallback) {
+  const text = outfitShareText(rec, weather, place);
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: "오늘 뭐 입지?", text });
+      return;
+    } catch (e) {
+      // 사용자가 공유를 취소한 경우 등은 무시
+      return;
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    onFallback?.("클립보드에 복사됐어요");
+  } catch (e) {
+    onFallback?.("공유를 지원하지 않는 브라우저예요");
+  }
+}
+
 const MIN_RECORDS_FOR_ANALYSIS = 3;
 const MEMO_KEYWORDS = [
   { word: "에어컨", tip: "실내 에어컨 때문에 춥다고 적으신 적이 있어요. 얇은 가디건을 상시 챙겨보면 좋아요." },
@@ -290,6 +321,64 @@ function saveProfile(profile) {
   }
 }
 
+function loadFavorites() {
+  try {
+    const raw = localStorage.getItem(FAVORITES_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+}
+function saveFavorites(favorites) {
+  try {
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify(favorites));
+  } catch (e) {
+    console.error("즐겨찾기 저장 실패", e);
+  }
+}
+
+// 기록 + 프로필 + 즐겨찾기를 하나의 JSON 파일로 내보낸다.
+function exportBackup(records, profile, favorites) {
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    app: "ootd-weather-diary",
+    version: 1,
+    records,
+    profile,
+    favorites,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `오늘뭐입지-백업-${fmtDate(new Date())}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// 백업 JSON을 읽어서 파싱한다. 형식이 다르면 null을 반환한다.
+function parseBackupFile(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        if (data && typeof data === "object" && data.records) {
+          resolve(data);
+        } else {
+          resolve(null);
+        }
+      } catch (e) {
+        resolve(null);
+      }
+    };
+    reader.onerror = () => resolve(null);
+    reader.readAsText(file);
+  });
+}
+
 // 현재 날씨와 시간에 맞는 회색 픽토그램을 표시한다.
 function weatherSymbol(weatherCode, pop, hour) {
   const isSnow = [71, 73, 75, 77, 85, 86].includes(weatherCode);
@@ -417,6 +506,7 @@ function FeelingMark({ feeling, active, size = 14 }) {
 export default function App() {
   const [records, setRecords] = useState(() => loadRecords());
   const [profile, setProfile] = useState(() => loadProfile());
+  const [favorites, setFavorites] = useState(() => loadFavorites());
   const [weather, setWeather] = useState({ status: "loading", place: SEOUL.name });
   const [monthCursor, setMonthCursor] = useState(() => {
     const t = new Date();
@@ -430,6 +520,10 @@ export default function App() {
   const [selectedHour, setSelectedHour] = useState(0);
   const [showTomorrow, setShowTomorrow] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [backupOpen, setBackupOpen] = useState(false);
+  const [importMsg, setImportMsg] = useState("");
+  const [shareMsg, setShareMsg] = useState("");
+  const importInputRef = useRef(null);
   const hourlyScrollRef = useRef(null);
   const hourlyDragRef = useRef({ active: false, startX: 0, scrollLeft: 0 });
 
@@ -437,7 +531,7 @@ export default function App() {
     setWeather((w) => ({ ...w, status: "loading" }));
 
     const weatherP = fetch(
-      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&hourly=precipitation_probability,temperature_2m&wind_speed_unit=ms&timezone=Asia%2FSeoul&forecast_days=2`
+      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&hourly=precipitation_probability,temperature_2m&daily=temperature_2m_max,temperature_2m_min&wind_speed_unit=ms&timezone=Asia%2FSeoul&forecast_days=2`
     ).then((r) => r.json());
 
     const airP = fetch(
@@ -474,8 +568,29 @@ export default function App() {
         const pm10 = air?.current?.pm10 ?? null;
         const pm25 = air?.current?.pm2_5 ?? null;
         const feels = feelsLike(temp, humidity, wind);
+        const todayMin = data.daily?.temperature_2m_min?.[0] ?? null;
+        const todayMax = data.daily?.temperature_2m_max?.[0] ?? null;
+        const tomorrowMin = data.daily?.temperature_2m_min?.[1] ?? null;
+        const tomorrowMax = data.daily?.temperature_2m_max?.[1] ?? null;
 
-        setWeather({ status: "ok", temp, feels, pop, humidity, wind, weatherCode, pm10, pm25, hourly, tomorrowHourly, place: resolvedPlace });
+        setWeather({
+          status: "ok",
+          temp,
+          feels,
+          pop,
+          humidity,
+          wind,
+          weatherCode,
+          pm10,
+          pm25,
+          hourly,
+          tomorrowHourly,
+          todayMin,
+          todayMax,
+          tomorrowMin,
+          tomorrowMax,
+          place: resolvedPlace,
+        });
         setHourRange(8);
         setSelectedHour(0);
         setShowTomorrow(false);
@@ -503,6 +618,40 @@ export default function App() {
   function persist(next) {
     setRecords(next);
     saveRecords(next);
+  }
+
+  function toggleFavorite(place) {
+    setFavorites((prev) => {
+      const exists = prev.some((f) => f.name === place.name && f.latitude === place.latitude && f.longitude === place.longitude);
+      const next = exists
+        ? prev.filter((f) => !(f.name === place.name && f.latitude === place.latitude && f.longitude === place.longitude))
+        : [...prev, { name: place.name, latitude: place.latitude, longitude: place.longitude, admin1: place.admin1, country: place.country }];
+      saveFavorites(next);
+      return next;
+    });
+  }
+
+  function handleImportFile(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    parseBackupFile(file).then((data) => {
+      if (!data) {
+        setImportMsg("파일을 읽을 수 없어요. 이 앱에서 내보낸 백업 파일인지 확인해주세요.");
+        return;
+      }
+      const mergedRecords = { ...records, ...(data.records || {}) };
+      persist(mergedRecords);
+      if (data.profile) {
+        setProfile(data.profile);
+        saveProfile(data.profile);
+      }
+      if (Array.isArray(data.favorites)) {
+        setFavorites(data.favorites);
+        saveFavorites(data.favorites);
+      }
+      setImportMsg(`불러오기 완료 (기록 ${Object.keys(data.records || {}).length}일치 반영)`);
+    });
   }
 
   function startHourlyDrag(event) {
@@ -550,6 +699,13 @@ export default function App() {
       rec.tips.push("지난 기록을 보면 이 기온대에서 추위를 느끼셨어요. 아우터를 하나 더 챙기는 걸 추천해요.");
     } else if (analysis.hotThreshold != null && weather.feels >= analysis.hotThreshold - 2) {
       rec.tips.push("지난 기록을 보면 이 기온대에서 더위를 느끼셨어요. 통풍 잘 되는 소재를 우선해보세요.");
+    }
+  }
+
+  if (rec && weather.status === "ok" && weather.todayMin != null && weather.todayMax != null) {
+    const spread = weather.todayMax - weather.todayMin;
+    if (spread >= 8) {
+      rec.tips.push(`오늘 일교차가 커요 (최저 ${Math.round(weather.todayMin)}° · 최고 ${Math.round(weather.todayMax)}°). 아침저녁엔 겉옷을 챙기고 낮엔 벗을 수 있게 준비하세요.`);
     }
   }
 
@@ -695,6 +851,11 @@ export default function App() {
                   {rec.desc}
                 </span>
               </div>
+              {weather.todayMin != null && weather.todayMax != null && (
+                <div style={{ fontFamily: TOKENS.fontDisplay, fontSize: 13, color: TOKENS.fgMid, marginTop: 8, letterSpacing: "0.02em" }}>
+                  최저 {Math.round(weather.todayMin)}° · 최고 {Math.round(weather.todayMax)}°
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -968,6 +1129,29 @@ export default function App() {
                 </div>
               </div>
             )}
+
+            <button
+              onClick={() => {
+                setShareMsg("");
+                shareOutfit(rec, weather, weather.place, setShareMsg);
+              }}
+              style={{
+                marginTop: 20,
+                background: "none",
+                border: `1px solid ${TOKENS.rule}`,
+                color: TOKENS.fgMid,
+                padding: "10px 16px",
+                fontFamily: TOKENS.fontDisplay,
+                fontSize: 12,
+                letterSpacing: "0.06em",
+                cursor: "pointer",
+              }}
+            >
+              오늘의 코디 공유하기
+            </button>
+            {shareMsg && (
+              <div style={{ marginTop: 8, fontSize: 11.5, color: TOKENS.accent }}>{shareMsg}</div>
+            )}
           </>
         )}
 
@@ -1099,6 +1283,57 @@ export default function App() {
             )}
           </div>
         )}
+
+        <SectionToggle label="데이터 백업" open={backupOpen} onClick={() => setBackupOpen((v) => !v)} />
+        {backupOpen && (
+          <div style={{ padding: "18px 0" }}>
+            <p style={{ fontSize: 12.5, color: TOKENS.fgDim, lineHeight: 1.6, marginTop: 0, marginBottom: 16 }}>
+              기록은 이 브라우저 안에만 저장돼요. 기기를 바꾸거나 브라우저 데이터를 지우면 사라지니, 가끔 백업해두는 걸 추천해요.
+            </p>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              <button
+                onClick={() => exportBackup(records, profile, favorites)}
+                style={{
+                  flex: 1,
+                  background: "none",
+                  border: `1px solid ${TOKENS.rule}`,
+                  color: TOKENS.fg,
+                  padding: "11px 0",
+                  fontFamily: TOKENS.fontDisplay,
+                  fontSize: 12.5,
+                  letterSpacing: "0.04em",
+                  cursor: "pointer",
+                }}
+              >
+                내보내기
+              </button>
+              <button
+                onClick={() => importInputRef.current?.click()}
+                style={{
+                  flex: 1,
+                  background: "none",
+                  border: `1px solid ${TOKENS.rule}`,
+                  color: TOKENS.fg,
+                  padding: "11px 0",
+                  fontFamily: TOKENS.fontDisplay,
+                  fontSize: 12.5,
+                  letterSpacing: "0.04em",
+                  cursor: "pointer",
+                }}
+              >
+                가져오기
+              </button>
+              <input
+                ref={importInputRef}
+                type="file"
+                accept="application/json"
+                onChange={handleImportFile}
+                style={{ display: "none" }}
+              />
+            </div>
+            {importMsg && <p style={{ fontSize: 12, color: TOKENS.accent, margin: 0 }}>{importMsg}</p>}
+          </div>
+        )}
       </div>
 
       {sheetDate && (
@@ -1128,6 +1363,8 @@ export default function App() {
       )}
       {searchOpen && (
         <LocationSearchSheet
+          favorites={favorites}
+          onToggleFavorite={toggleFavorite}
           onClose={() => setSearchOpen(false)}
           onSelect={(place) => {
             fetchAll(place.latitude, place.longitude, (place.name || "").toUpperCase(), false);
@@ -1139,10 +1376,12 @@ export default function App() {
   );
 }
 
-function LocationSearchSheet({ onClose, onSelect }) {
+function LocationSearchSheet({ favorites, onToggleFavorite, onClose, onSelect }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
+
+  const isFav = (p) => favorites.some((f) => f.name === p.name && f.latitude === p.latitude && f.longitude === p.longitude);
 
   useEffect(() => {
     if (query.trim().length < 1) {
@@ -1206,6 +1445,34 @@ function LocationSearchSheet({ onClose, onSelect }) {
           }}
         />
 
+        {query.trim().length === 0 && favorites.length > 0 && (
+          <>
+            <Eyebrow style={{ marginBottom: 6 }}>즐겨찾기</Eyebrow>
+            <div style={{ marginBottom: 10 }}>
+              {favorites.map((f, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", borderTop: `1px solid ${TOKENS.rule}` }}>
+                  <button
+                    onClick={() => onSelect(f)}
+                    style={{ flex: 1, textAlign: "left", background: "none", border: "none", padding: "14px 0", cursor: "pointer", color: TOKENS.fg }}
+                  >
+                    <div style={{ fontSize: 15, fontWeight: 500 }}>{f.name}</div>
+                    <div style={{ fontFamily: TOKENS.fontDisplay, fontSize: 11.5, color: TOKENS.fgDim, letterSpacing: "0.04em", marginTop: 2 }}>
+                      {[f.admin1, f.country].filter(Boolean).join(" · ")}
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => onToggleFavorite(f)}
+                    style={{ background: "none", border: "none", color: TOKENS.accent, fontSize: 18, cursor: "pointer", padding: 8 }}
+                    aria-label="즐겨찾기 해제"
+                  >
+                    ★
+                  </button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
         {searching && <Eyebrow>검색 중...</Eyebrow>}
 
         {!searching && query.trim().length > 0 && results.length === 0 && (
@@ -1214,25 +1481,32 @@ function LocationSearchSheet({ onClose, onSelect }) {
 
         <div>
           {results.map((r, i) => (
-            <button
-              key={i}
-              onClick={() => onSelect(r)}
-              style={{
-                width: "100%",
-                textAlign: "left",
-                background: "none",
-                border: "none",
-                borderTop: `1px solid ${TOKENS.rule}`,
-                padding: "14px 0",
-                cursor: "pointer",
-                color: TOKENS.fg,
-              }}
-            >
-              <div style={{ fontSize: 15, fontWeight: 500 }}>{r.name}</div>
-              <div style={{ fontFamily: TOKENS.fontDisplay, fontSize: 11.5, color: TOKENS.fgDim, letterSpacing: "0.04em", marginTop: 2 }}>
-                {[r.admin1, r.country].filter(Boolean).join(" · ")}
-              </div>
-            </button>
+            <div key={i} style={{ display: "flex", alignItems: "center", borderTop: `1px solid ${TOKENS.rule}` }}>
+              <button
+                onClick={() => onSelect(r)}
+                style={{
+                  flex: 1,
+                  textAlign: "left",
+                  background: "none",
+                  border: "none",
+                  padding: "14px 0",
+                  cursor: "pointer",
+                  color: TOKENS.fg,
+                }}
+              >
+                <div style={{ fontSize: 15, fontWeight: 500 }}>{r.name}</div>
+                <div style={{ fontFamily: TOKENS.fontDisplay, fontSize: 11.5, color: TOKENS.fgDim, letterSpacing: "0.04em", marginTop: 2 }}>
+                  {[r.admin1, r.country].filter(Boolean).join(" · ")}
+                </div>
+              </button>
+              <button
+                onClick={() => onToggleFavorite(r)}
+                style={{ background: "none", border: "none", color: isFav(r) ? TOKENS.accent : TOKENS.fgDim, fontSize: 18, cursor: "pointer", padding: 8 }}
+                aria-label="즐겨찾기"
+              >
+                {isFav(r) ? "★" : "☆"}
+              </button>
+            </div>
           ))}
         </div>
       </div>
@@ -1319,11 +1593,51 @@ function ProfileSheet({ existing, onClose, onSave }) {
   );
 }
 
+// 선택한 이미지를 리사이즈해서 localStorage에 부담 없는 크기로 압축한다.
+function resizeImageFile(file, maxWidth = 800, quality = 0.72) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, maxWidth / img.width);
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.onerror = reject;
+      img.src = reader.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 function RecordSheet({ dateStr, isToday, weather, existing, onClose, onSave }) {
   const [items, setItems] = useState(existing?.items_worn || "");
   const [feeling, setFeeling] = useState(existing?.feeling || null);
   const [memo, setMemo] = useState(existing?.user_memo || "");
+  const [photo, setPhoto] = useState(existing?.photo || null);
+  const [photoBusy, setPhotoBusy] = useState(false);
   const [y, m, d] = dateStr.split("-");
+
+  async function handlePhotoPick(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setPhotoBusy(true);
+    try {
+      const dataUrl = await resizeImageFile(file);
+      setPhoto(dataUrl);
+    } catch (e) {
+      // 실패해도 기존 흐름은 막지 않음
+    } finally {
+      setPhotoBusy(false);
+    }
+  }
 
   const canSave = items.trim().length > 0 && feeling;
 
@@ -1384,6 +1698,55 @@ function RecordSheet({ dateStr, isToday, weather, existing, onClose, onSave }) {
           style={{ ...inputStyle, marginBottom: 24 }}
         />
 
+        <Eyebrow style={{ marginBottom: 10 }}>사진 (선택)</Eyebrow>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
+          {photo ? (
+            <div style={{ position: "relative" }}>
+              <img src={photo} alt="오늘 착장" style={{ width: 72, height: 72, objectFit: "cover", display: "block" }} />
+              <button
+                onClick={() => setPhoto(null)}
+                style={{
+                  position: "absolute",
+                  top: -8,
+                  right: -8,
+                  width: 20,
+                  height: 20,
+                  borderRadius: "50%",
+                  background: TOKENS.bg,
+                  border: `1px solid ${TOKENS.rule}`,
+                  color: TOKENS.fg,
+                  fontSize: 12,
+                  lineHeight: 1,
+                  cursor: "pointer",
+                }}
+                aria-label="사진 삭제"
+              >
+                ×
+              </button>
+            </div>
+          ) : (
+            <label
+              style={{
+                width: 72,
+                height: 72,
+                border: `1px dashed ${TOKENS.rule}`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 22,
+                color: TOKENS.fgDim,
+                cursor: "pointer",
+              }}
+            >
+              {photoBusy ? "···" : "+"}
+              <input type="file" accept="image/*" onChange={handlePhotoPick} style={{ display: "none" }} />
+            </label>
+          )}
+          <span style={{ fontSize: 12, color: TOKENS.fgDim, lineHeight: 1.5 }}>
+            오늘 입은 옷 사진을 남겨두면{"\n"}나중에 기록을 볼 때 더 도움이 돼요.
+          </span>
+        </div>
+
         <Eyebrow style={{ marginBottom: 10 }}>오늘 옷차림은 어떠셨나요</Eyebrow>
         <div style={{ display: "flex", gap: 0, marginBottom: 24, borderTop: `1px solid ${TOKENS.rule}`, borderBottom: `1px solid ${TOKENS.rule}` }}>
           {Object.entries(FEELINGS).map(([key, f], i) => (
@@ -1426,6 +1789,7 @@ function RecordSheet({ dateStr, isToday, weather, existing, onClose, onSave }) {
               items_worn: items.trim(),
               feeling,
               user_memo: memo.trim(),
+              photo: photo || null,
               temperature: weather?.status === "ok" ? weather.temp : existing?.temperature ?? null,
               rain_prob: weather?.status === "ok" ? weather.pop : existing?.rain_prob ?? null,
             })
