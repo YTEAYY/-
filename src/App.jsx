@@ -550,6 +550,7 @@ export default function App() {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [logoutOpen, setLogoutOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [backupOpen, setBackupOpen] = useState(false);
   const [importMsg, setImportMsg] = useState("");
@@ -626,7 +627,12 @@ export default function App() {
   }
 
   function logout() {
+    setLogoutOpen(true);
+  }
+
+  function confirmLogout() {
     sessionStorage.removeItem("ootd-auth-ui-seen");
+    setLogoutOpen(false);
     setAuthUiSeen(false);
   }
 
@@ -1559,6 +1565,29 @@ export default function App() {
             setSheetDate(dateStr);
           }}
         />
+      )}
+      {logoutOpen && (
+        <div
+          className="ootd-scope"
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.72)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 100 }}
+          onClick={() => setLogoutOpen(false)}
+        >
+          <div
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="logout-title"
+            style={{ width: "100%", maxWidth: 360, background: TOKENS.bgRaised, border: `1px solid ${TOKENS.rule}`, padding: "26px 22px 22px", fontFamily: TOKENS.fontBody, color: TOKENS.fg }}
+          >
+            <Eyebrow style={{ color: TOKENS.accent, marginBottom: 10 }}>SIGN OUT</Eyebrow>
+            <h2 id="logout-title" style={{ fontFamily: TOKENS.fontDisplay, fontSize: 25, margin: 0, lineHeight: 1.1 }}>정말 로그아웃할까요?</h2>
+            <p style={{ color: TOKENS.fgDim, fontSize: 13, lineHeight: 1.6, margin: "12px 0 22px" }}>현재 세션에서 로그아웃합니다. 기록과 프로필 데이터는 이 브라우저에 남아 있어요.</p>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setLogoutOpen(false)} style={{ flex: 1, background: "none", border: `1px solid ${TOKENS.rule}`, color: TOKENS.fgMid, padding: "12px 0", fontFamily: TOKENS.fontDisplay, fontSize: 13, cursor: "pointer" }}>취소</button>
+              <button onClick={confirmLogout} style={{ flex: 1, background: TOKENS.accent, border: `1px solid ${TOKENS.accent}`, color: TOKENS.bg, padding: "12px 0", fontFamily: TOKENS.fontDisplay, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>로그아웃</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
