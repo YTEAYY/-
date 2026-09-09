@@ -590,6 +590,9 @@ export default function App() {
   const importInputRef = useRef(null);
   const hourlyScrollRef = useRef(null);
   const hourlyDragRef = useRef({ active: false, startX: 0, scrollLeft: 0 });
+  const aiRequestIdRef = useRef(0);
+  const [aiRec, setAiRec] = useState(null);
+  const [aiStatus, setAiStatus] = useState("idle"); // idle | loading | done | error
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 60 * 1000);
     return () => clearInterval(timer);
@@ -744,8 +747,17 @@ export default function App() {
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
 
   const aqi = weather.status === "ok" ? aqiInfo(weather.pm10, weather.pm25) : null;
-  const rec = weather.status === "ok"
+  const localRec = weather.status === "ok"
     ? outfitFor(weather.temp, weather.feels, weather.pop, weather.humidity, weather.wind, profile, aqi, weather.weatherCode, wardrobe)
+    : null;
+  // AI(Gemini)가 응답을 준 경우 items/tips만 AI 결과로 교체하고, band/eng/desc 등은 그대로 로컬 계산을 사용한다.
+  // AI 호출이 아직 안 끝났거나 실패하면 자연스럽게 로컬 규칙 기반 추천이 그대로 보인다.
+  const rec = localRec
+    ? {
+        ...localRec,
+        items: aiRec?.items?.length ? aiRec.items : localRec.items,
+        tips: aiRec?.tips?.length ? [...aiRec.tips] : [...localRec.tips],
+      }
     : null;
   if (rec) rec.headline = seasonalHeadline(rec.band, todayStr);
   const analysis = analyzeRecords(records);
@@ -767,6 +779,58 @@ export default function App() {
       rec.tips.push(`오늘 일교차가 커요 (최저 ${Math.round(weather.todayMin)}° · 최고 ${Math.round(weather.todayMax)}°). 아침저녁엔 겉옷을 챙기고 낮엔 벗을 수 있게 준비하세요.`);
     }
   }
+
+  // AI(Gemini)에게 오늘 날씨+프로필+옷장을 보내서 옷차림을 분석·추천받는다.
+  // 날씨/프로필/옷장이 바뀔 때만 새로 호출하고, 응답이 늦게 와서 순서가 꼬이면 최신 요청 결과만 반영한다.
+  useEffect(() => {
+    if (weather.status !== "ok" || !localRec) {
+      setAiRec(null);
+      setAiStatus("idle");
+      return;
+    }
+    const reqId = ++aiRequestIdRef.current;
+    setAiStatus("loading");
+    fetch("/api/recommend", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        temp: weather.temp,
+        feels: weather.feels,
+        pop: weather.pop,
+        humidity: weather.humidity,
+        wind: weather.wind,
+        weatherCode: weather.weatherCode,
+        aqiLabel: aqi?.label,
+        band: localRec.band,
+        profile,
+        wardrobe,
+      }),
+    })
+      .then((response) => (response.ok ? response.json() : Promise.reject(new Error("bad status"))))
+      .then((data) => {
+        if (aiRequestIdRef.current !== reqId) return; // 이미 더 최신 요청이 나간 경우 무시
+        setAiRec(data);
+        setAiStatus("done");
+      })
+      .catch(() => {
+        if (aiRequestIdRef.current !== reqId) return;
+        setAiRec(null);
+        setAiStatus("error");
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    weather.status,
+    weather.temp,
+    weather.feels,
+    weather.pop,
+    weather.humidity,
+    weather.wind,
+    weather.weatherCode,
+    localRec?.band,
+    aqi?.label,
+    JSON.stringify(profile),
+    JSON.stringify(wardrobe),
+  ]);
 
   let rainAlert = null;
   if (weather.status === "ok" && weather.hourly && weather.pop < 40) {
@@ -1179,7 +1243,9 @@ export default function App() {
                   {rec.headline}
                 </div>
               </div>
-              <Eyebrow style={{ whiteSpace: "nowrap", flexShrink: 0, marginLeft: 12 }}>TODAY'S PICK</Eyebrow>
+              <Eyebrow style={{ whiteSpace: "nowrap", flexShrink: 0, marginLeft: 12, color: aiStatus === "done" ? TOKENS.accent : undefined }}>
+                {aiStatus === "loading" ? "AI 분석 중..." : aiStatus === "done" ? "AI 추천" : "TODAY'S PICK"}
+              </Eyebrow>
             </div>
 
             {rec.profileNotes.length > 0 && (
@@ -1623,4 +1689,3 @@ export default function App() {
     </div>
   );
 }
-
