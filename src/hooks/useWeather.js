@@ -56,8 +56,9 @@ export function useWeather(fallbackLocation) {
       .then(([data, air, resolvedPlace]) => {
         if (requestId !== requestRef.current) return;
         const current = data.current;
+        const nowDate = current.time.slice(0, 10);
         const nowHour = Number(current.time.slice(11, 13));
-        const index = data.hourly.time.findIndex((time) => Number(time.slice(11, 13)) === nowHour);
+        const index = data.hourly.time.findIndex((time) => time.slice(0, 10) === nowDate && Number(time.slice(11, 13)) === nowHour);
         const startIndex = index >= 0 ? index : 0;
         const { hourly, tomorrowHourly } = parseHourly(data, startIndex);
         const temp = current.temperature_2m;

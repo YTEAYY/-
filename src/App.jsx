@@ -86,7 +86,29 @@ const OUTFIT_BASE = {
   cold: { top: "히트텍 + 니트", bottom: "기모 팬츠", outer: "롱패딩 또는 두꺼운 코트", shoes: "부츠", acc: "목도리, 장갑, 비니" },
 };
 
-function outfitFor(temp, feels, pop, humidity, wind, profile = {}, aqi = null, weatherCode = null) {
+function wardrobeMatchFor(category, wantedWarmth, wardrobe) {
+  const exact = wardrobe.filter((item) => item.category === category && item.warmth === wantedWarmth);
+  if (exact.length > 0) {
+    return exact.sort((a, b) => a.name.localeCompare(b.name, "ko", { sensitivity: "base" }))[0].name;
+  }
+
+  const fallbackWarmth = {
+    hot: ["hot", "mild"],
+    mild: ["mild", "cold", "hot"],
+    cold: ["cold", "mild"],
+  }[wantedWarmth] || [wantedWarmth];
+
+  for (const warmth of fallbackWarmth) {
+    const candidates = wardrobe.filter((item) => item.category === category && item.warmth === warmth);
+    if (candidates.length > 0) {
+      return candidates.sort((a, b) => a.name.localeCompare(b.name, "ko", { sensitivity: "base" }))[0].name;
+    }
+  }
+
+  return null;
+}
+
+function outfitFor(temp, feels, pop, humidity, wind, profile = {}, aqi = null, weatherCode = null, wardrobe = []) {
   let band;
   if (feels >= 29) band = "boiling";
   else if (feels >= 24) band = "hot";
@@ -96,6 +118,13 @@ function outfitFor(temp, feels, pop, humidity, wind, profile = {}, aqi = null, w
   else band = "cold";
 
   const outfit = { ...OUTFIT_BASE[band] };
+  if (Array.isArray(wardrobe) && wardrobe.length > 0) {
+    CATEGORY_ORDER.forEach((cat) => {
+      const selectedItem = wardrobeMatchFor(cat, bandToWarmth(band), wardrobe);
+      if (selectedItem) outfit[cat] = selectedItem;
+    });
+  }
+
   const tips = [];
   const flags = {};
   const profileNotes = [];
@@ -235,7 +264,7 @@ async function shareOutfit(rec, weather, place, onFallback) {
   }
 }
 
-const MIN_RECORDS_FOR_ANALYSIS = 3;
+const MIN_RECORDS_FOR_ANALYSIS = 1;
 const MEMO_KEYWORDS = [
   { word: "에어컨", tip: "실내 에어컨 때문에 춥다고 적으신 적이 있어요. 얇은 가디건을 상시 챙겨보면 좋아요." },
   { word: "히터", tip: "히터 때문에 덥다고 적으신 적이 있어요. 실내에서 바로 벗을 수 있는 레이어드가 편해요." },
@@ -715,7 +744,9 @@ export default function App() {
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
 
   const aqi = weather.status === "ok" ? aqiInfo(weather.pm10, weather.pm25) : null;
-  const rec = weather.status === "ok" ? outfitFor(weather.temp, weather.feels, weather.pop, weather.humidity, weather.wind, profile, aqi, weather.weatherCode) : null;
+  const rec = weather.status === "ok"
+    ? outfitFor(weather.temp, weather.feels, weather.pop, weather.humidity, weather.wind, profile, aqi, weather.weatherCode, wardrobe)
+    : null;
   if (rec) rec.headline = seasonalHeadline(rec.band, todayStr);
   const analysis = analyzeRecords(records);
   const displayedHourly = showTomorrow ? weather.tomorrowHourly : weather.hourly;
@@ -1394,7 +1425,7 @@ export default function App() {
           <div style={{ padding: "18px 0" }}>
             {!analysis.ready ? (
               <p style={{ fontSize: 13, color: TOKENS.fgDim, lineHeight: 1.7, margin: 0 }}>
-                기록이 {analysis.count}/{MIN_RECORDS_FOR_ANALYSIS}일 쌓였어요. {MIN_RECORDS_FOR_ANALYSIS}일 이상 기록하면 나만의 체감 패턴을 분석해드려요.
+                기록이 {analysis.count}/{MIN_RECORDS_FOR_ANALYSIS}일 쌓였어요. {MIN_RECORDS_FOR_ANALYSIS}일 기록으로 나만의 체감 패턴을 분석해드려요.
               </p>
             ) : (
               <>
