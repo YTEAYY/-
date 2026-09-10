@@ -1086,7 +1086,7 @@ export default function App() {
             >
               {[
                 { label: "체감", val: fmtTemp(weather.feels, unit) },
-                { label: "강수", val: `${weather.pop}%` },
+                { label: "강수", val: `${displayedHourly?.[selectedHour]?.pop ?? weather.pop}%` },
                 { label: "습도", val: `${weather.humidity}%` },
                 { label: "바람", val: `${Math.round(weather.wind)}㎧` },
               ].map((s, i) => (
