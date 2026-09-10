@@ -1085,10 +1085,10 @@ export default function App() {
               }}
             >
               {[
-                { label: "체감", val: fmtTemp(weather.feels, unit) },
+                { label: "체감", val: fmtTemp(displayedHourly?.[selectedHour]?.feels ?? weather.feels, unit) },
                 { label: "강수", val: `${displayedHourly?.[selectedHour]?.pop ?? weather.pop}%` },
-                { label: "습도", val: `${weather.humidity}%` },
-                { label: "바람", val: `${Math.round(weather.wind)}㎧` },
+                { label: "습도", val: `${displayedHourly?.[selectedHour]?.humidity ?? weather.humidity}%` },
+                { label: "바람", val: `${Math.round(displayedHourly?.[selectedHour]?.wind ?? weather.wind)}㎧` },
               ].map((s, i) => (
                 <div key={i} style={{ padding: "13px 0", borderRight: i < 3 ? `1px solid ${TOKENS.rule}` : "none", paddingLeft: i === 0 ? 0 : 12 }}>
                   <Eyebrow style={{ marginBottom: 4 }}>{s.label}</Eyebrow>
@@ -1689,3 +1689,4 @@ export default function App() {
     </div>
   );
 }
+
