@@ -414,7 +414,7 @@ function weatherSymbol(weatherCode, pop, hour) {
   const isSnow = [71, 73, 75, 77, 85, 86].includes(weatherCode);
   const isThunder = [95, 96, 99].includes(weatherCode);
   const isRain = [51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82].includes(weatherCode);
-  const isEvening = hour >= 20 || hour < 6;
+  const isEvening = hour >= 19 || hour < 6;
 
   if (isSnow) return "❄";
   if (isThunder) return "ϟ";
@@ -747,8 +747,17 @@ export default function App() {
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
 
   const aqi = weather.status === "ok" ? aqiInfo(weather.pm10, weather.pm25) : null;
+  const displayedHourly = showTomorrow ? weather.tomorrowHourly : weather.hourly;
+  const effectiveHour = displayedHourly?.[selectedHour];
+  // 선택한 시간대가 있으면 그 시간 기준 값을, 없으면 "지금" 값을 사용한다.
+  // 이 값들이 큰 온도/헤드라인/옷차림 추천/경보 전체에 동일하게 반영된다.
+  const effTemp = effectiveHour?.temp ?? weather.temp;
+  const effFeels = effectiveHour?.feels ?? weather.feels;
+  const effPop = effectiveHour?.pop ?? weather.pop;
+  const effHumidity = effectiveHour?.humidity ?? weather.humidity;
+  const effWind = effectiveHour?.wind ?? weather.wind;
   const localRec = weather.status === "ok"
-    ? outfitFor(weather.temp, weather.feels, weather.pop, weather.humidity, weather.wind, profile, aqi, weather.weatherCode, wardrobe)
+    ? outfitFor(effTemp, effFeels, effPop, effHumidity, effWind, profile, aqi, weather.weatherCode, wardrobe)
     : null;
   // AI(Gemini)가 응답을 준 경우 items/tips만 AI 결과로 교체하고, band/eng/desc 등은 그대로 로컬 계산을 사용한다.
   // AI 호출이 아직 안 끝났거나 실패하면 자연스럽게 로컬 규칙 기반 추천이 그대로 보인다.
@@ -761,14 +770,13 @@ export default function App() {
     : null;
   if (rec) rec.headline = seasonalHeadline(rec.band, todayStr);
   const analysis = analyzeRecords(records);
-  const displayedHourly = showTomorrow ? weather.tomorrowHourly : weather.hourly;
   const visibleHourRange = showTomorrow ? displayedHourly?.length ?? 0 : hourRange;
-  const alerts = weather.status === "ok" ? weatherAlerts(weather.weatherCode, weather.temp, weather.feels, weather.humidity, weather.wind, weather.pop) : [];
+  const alerts = weather.status === "ok" ? weatherAlerts(weather.weatherCode, effTemp, effFeels, effHumidity, effWind, effPop) : [];
 
   if (rec && analysis.ready) {
-    if (analysis.coldThreshold != null && weather.feels <= analysis.coldThreshold + 2) {
+    if (analysis.coldThreshold != null && effFeels <= analysis.coldThreshold + 2) {
       rec.tips.push("지난 기록을 보면 이 기온대에서 추위를 느끼셨어요. 아우터를 하나 더 챙기는 걸 추천해요.");
-    } else if (analysis.hotThreshold != null && weather.feels >= analysis.hotThreshold - 2) {
+    } else if (analysis.hotThreshold != null && effFeels >= analysis.hotThreshold - 2) {
       rec.tips.push("지난 기록을 보면 이 기온대에서 더위를 느끼셨어요. 통풍 잘 되는 소재를 우선해보세요.");
     }
   }
@@ -794,11 +802,11 @@ export default function App() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        temp: weather.temp,
-        feels: weather.feels,
-        pop: weather.pop,
-        humidity: weather.humidity,
-        wind: weather.wind,
+        temp: effTemp,
+        feels: effFeels,
+        pop: effPop,
+        humidity: effHumidity,
+        wind: effWind,
         weatherCode: weather.weatherCode,
         aqiLabel: aqi?.label,
         band: localRec.band,
@@ -820,11 +828,11 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     weather.status,
-    weather.temp,
-    weather.feels,
-    weather.pop,
-    weather.humidity,
-    weather.wind,
+    effTemp,
+    effFeels,
+    effPop,
+    effHumidity,
+    effWind,
     weather.weatherCode,
     localRec?.band,
     aqi?.label,
@@ -974,7 +982,7 @@ export default function App() {
                userSelect: "none",
                }}
             >
-               {weatherSymbol(weather.weatherCode, weather.pop, Number(localTime.slice(0, 2)))}
+               {weatherSymbol(weather.weatherCode, effPop, effectiveHour?.hour ?? Number(localTime.slice(0, 2)))}
             </div>
             {alerts.length > 0 && (
               <div
@@ -1026,7 +1034,7 @@ export default function App() {
                   letterSpacing: "-0.02em",
                 }}
               >
-                {fmtTemp(weather.temp, unit)}
+                {fmtTemp(effTemp, unit)}
               </div>
               <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginTop: 14, flexWrap: "wrap", maxWidth: "calc(100% - 104px)" }}>
                 <span style={{ fontFamily: TOKENS.fontDisplay, fontWeight: 700, fontSize: 24, letterSpacing: "0.05em", color: TOKENS.accent }}>
@@ -1085,10 +1093,10 @@ export default function App() {
               }}
             >
               {[
-                { label: "체감", val: fmtTemp(displayedHourly?.[selectedHour]?.feels ?? weather.feels, unit) },
-                { label: "강수", val: `${displayedHourly?.[selectedHour]?.pop ?? weather.pop}%` },
-                { label: "습도", val: `${displayedHourly?.[selectedHour]?.humidity ?? weather.humidity}%` },
-                { label: "바람", val: `${Math.round(displayedHourly?.[selectedHour]?.wind ?? weather.wind)}㎧` },
+                { label: "체감", val: fmtTemp(effFeels, unit) },
+                { label: "강수", val: `${effPop}%` },
+                { label: "습도", val: `${effHumidity}%` },
+                { label: "바람", val: `${Math.round(effWind)}㎧` },
               ].map((s, i) => (
                 <div key={i} style={{ padding: "13px 0", borderRight: i < 3 ? `1px solid ${TOKENS.rule}` : "none", paddingLeft: i === 0 ? 0 : 12 }}>
                   <Eyebrow style={{ marginBottom: 4 }}>{s.label}</Eyebrow>
@@ -1689,4 +1697,3 @@ export default function App() {
     </div>
   );
 }
-
