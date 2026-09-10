@@ -15,17 +15,33 @@ function parseHourly(data, startIndex) {
     (time, index) => index > startIndex && time.slice(0, 10) !== data.hourly.time[startIndex].slice(0, 10)
   );
   const nextDayIndex = tomorrowStartIndex >= 0 ? tomorrowStartIndex : data.hourly.time.length;
-  const toHour = (time, index) => ({
-    hour: Number(time.slice(11, 13)),
-    temp: data.hourly.temperature_2m[startIndex + index],
-    pop: data.hourly.precipitation_probability[startIndex + index],
-  });
+  const toHour = (time, index) => {
+    const temp = data.hourly.temperature_2m[startIndex + index];
+    const humidity = data.hourly.relative_humidity_2m[startIndex + index];
+    const wind = data.hourly.wind_speed_10m[startIndex + index];
+    return {
+      hour: Number(time.slice(11, 13)),
+      temp,
+      pop: data.hourly.precipitation_probability[startIndex + index],
+      humidity,
+      wind,
+      feels: feelsLike(temp, humidity, wind),
+    };
+  };
   const hourly = data.hourly.time.slice(startIndex, nextDayIndex + 1).map(toHour);
-  const tomorrowHourly = data.hourly.time.slice(nextDayIndex, nextDayIndex + 24).map((time, index) => ({
-    hour: Number(time.slice(11, 13)),
-    temp: data.hourly.temperature_2m[nextDayIndex + index],
-    pop: data.hourly.precipitation_probability[nextDayIndex + index],
-  }));
+  const tomorrowHourly = data.hourly.time.slice(nextDayIndex, nextDayIndex + 24).map((time, index) => {
+    const temp = data.hourly.temperature_2m[nextDayIndex + index];
+    const humidity = data.hourly.relative_humidity_2m[nextDayIndex + index];
+    const wind = data.hourly.wind_speed_10m[nextDayIndex + index];
+    return {
+      hour: Number(time.slice(11, 13)),
+      temp,
+      pop: data.hourly.precipitation_probability[nextDayIndex + index],
+      humidity,
+      wind,
+      feels: feelsLike(temp, humidity, wind),
+    };
+  });
   return { hourly, tomorrowHourly };
 }
 
@@ -42,7 +58,7 @@ export function useWeather(fallbackLocation) {
     setWeather((current) => ({ ...current, status: "loading" }));
 
     const weatherPromise = fetch(
-      `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&hourly=precipitation_probability,temperature_2m&daily=temperature_2m_max,temperature_2m_min&wind_speed_unit=ms&timezone=auto&forecast_days=2`
+      `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&hourly=precipitation_probability,temperature_2m,relative_humidity_2m,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min&wind_speed_unit=ms&timezone=auto&forecast_days=2`
     ).then((response) => {
       if (!response.ok) throw new Error("날씨 API 오류");
       return response.json();
