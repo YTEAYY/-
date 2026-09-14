@@ -1199,7 +1199,7 @@ export default function App() {
                       >
                         <span style={{ fontSize: 11, color: isSelected ? TOKENS.accent : TOKENS.fgMid }}>{fmtTemp(h.temp, unit)}</span>
                         <div style={{ height: 28, display: "flex", alignItems: "flex-end" }}>
-                          <div style={{ width: 3, height: barH, background: h.pop >= 40 ? TOKENS.accent : TOKENS.fgDim }} />
+                          <div style={{ width: 3, height: barH, background: isSelected || h.pop >= 40 ? TOKENS.accent : TOKENS.fgDim }} />
                         </div>
                         <span style={{ fontSize: 10, color: TOKENS.fgDim }}>{!showTomorrow && i === 0 ? "지금" : `${h.hour}시`}</span>
                       </button>
@@ -1719,4 +1719,3 @@ export default function App() {
     </div>
   );
 }
-
