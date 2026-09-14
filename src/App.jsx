@@ -1109,6 +1109,14 @@ export default function App() {
               <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "10px 0 0", fontSize: 12.5, color: TOKENS.fgMid }}>
                 <span style={{ width: 6, height: 6, background: aqi.color, display: "inline-block" }} />
                 미세먼지 {aqi.label}
+                {(weather.pm10 != null || weather.pm25 != null) && (
+                  <span style={{ fontSize: 11, color: TOKENS.fgDim }}>
+                    {[
+                      weather.pm10 != null ? `PM10 ${Math.round(weather.pm10)}` : null,
+                      weather.pm25 != null ? `PM2.5 ${Math.round(weather.pm25)}` : null,
+                    ].filter(Boolean).join(" · ")}
+                  </span>
+                )}
               </div>
             )}
 
@@ -1697,3 +1705,4 @@ export default function App() {
     </div>
   );
 }
+
