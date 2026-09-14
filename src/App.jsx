@@ -459,6 +459,9 @@ function GlobalStyle() {
   );
 }
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+const MIN_PASSWORD_LENGTH = 8;
+
 function AuthPage({ onComplete }) {
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
@@ -467,6 +470,14 @@ function AuthPage({ onComplete }) {
 
   function handleSubmit(event) {
     event.preventDefault();
+    if (!EMAIL_REGEX.test(email.trim())) {
+      window.alert("올바른 이메일 형식을 입력해주세요. (예: name@example.com)");
+      return;
+    }
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      window.alert(`비밀번호는 ${MIN_PASSWORD_LENGTH}자 이상이어야 해요.`);
+      return;
+    }
     if (mode === "signup" && password !== passwordConfirm) {
       window.alert("비밀번호가 일치하지 않습니다.");
       return;
@@ -533,10 +544,13 @@ function AuthPage({ onComplete }) {
           <label style={{ display: "block", color: TOKENS.fgDim, fontFamily: TOKENS.fontDisplay, fontSize: 11, letterSpacing: "0.1em", marginBottom: 8 }}>
             PASSWORD
           </label>
-          <input type="password" required minLength={4} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="비밀번호를 입력해주세요" style={{ ...inputStyle, marginBottom: mode === "signup" ? 18 : 24 }} />
+          <input type="password" required minLength={MIN_PASSWORD_LENGTH} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="비밀번호 (8자 이상)" style={{ ...inputStyle, marginBottom: mode === "signup" ? 8 : 24 }} />
+          {mode === "signup" && (
+            <p style={{ color: TOKENS.fgDim, fontSize: 11.5, margin: "0 0 18px" }}>영문/숫자 조합 8자 이상을 권장해요.</p>
+          )}
 
           {mode === "signup" && (
-            <input type="password" required minLength={4} value={passwordConfirm} onChange={(event) => setPasswordConfirm(event.target.value)} placeholder="비밀번호를 한 번 더 입력해주세요" style={{ ...inputStyle, marginBottom: 24 }} />
+            <input type="password" required minLength={MIN_PASSWORD_LENGTH} value={passwordConfirm} onChange={(event) => setPasswordConfirm(event.target.value)} placeholder="비밀번호를 한 번 더 입력해주세요" style={{ ...inputStyle, marginBottom: 24 }} />
           )}
 
           <button type="submit" style={{ width: "100%", border: "none", background: TOKENS.accent, color: TOKENS.bg, padding: "15px 0", fontFamily: TOKENS.fontDisplay, fontSize: 14, fontWeight: 700, letterSpacing: "0.06em", cursor: "pointer" }}>
