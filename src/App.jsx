@@ -23,6 +23,7 @@ import RecordSheetComponent from "./components/RecordSheet";
 import { CATEGORY_LABEL, CATEGORY_ORDER } from "./lib/wardrobe";
 
 const SEOUL = { lat: 37.5665, lon: 126.978, name: "SEOUL" };
+const SNOW_WEATHER_CODES = new Set([71, 73, 75, 77, 85, 86]);
 
 function bandToWarmth(band) {
   if (band === "boiling" || band === "hot") return "hot";
@@ -129,6 +130,7 @@ function outfitFor(temp, feels, pop, humidity, wind, profile = {}, aqi = null, w
   const flags = {};
   const profileNotes = [];
   const isThunder = [95, 96, 99].includes(weatherCode);
+  const isSnow = SNOW_WEATHER_CODES.has(weatherCode);
 
   if (isThunder) {
     outfit.shoes = "방수 스니커즈 또는 워커 (가죽 신발 비추천)";
@@ -136,6 +138,12 @@ function outfitFor(temp, feels, pop, humidity, wind, profile = {}, aqi = null, w
     flags.shoes = "MUST";
     flags.acc = "MUST";
     tips.push("천둥번개가 예상돼요. 금속 우산보다 우비가 안전하고, 가능하면 야외 활동은 피하세요.");
+  } else if (isSnow) {
+    outfit.shoes = "미끄럼 방지 방한 부츠";
+    outfit.acc = "방한 장갑";
+    flags.shoes = "MUST";
+    flags.acc = "MUST";
+    tips.push("눈이 와요. 미끄럼 방지 신발을 신고 빙판길에서는 천천히 걸어주세요.");
   } else if (pop >= 50) {
     outfit.shoes = "방수 스니커즈 또는 워커 (가죽 신발 비추천)";
     flags.shoes = "MUST";
@@ -411,7 +419,7 @@ function parseBackupFile(file) {
 
 // 현재 날씨와 시간에 맞는 회색 픽토그램을 표시한다.
 function weatherSymbol(weatherCode, pop, hour) {
-  const isSnow = [71, 73, 75, 77, 85, 86].includes(weatherCode);
+  const isSnow = SNOW_WEATHER_CODES.has(weatherCode);
   const isThunder = [95, 96, 99].includes(weatherCode);
   const isRain = [51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82].includes(weatherCode);
   const isEvening = hour >= 19 || hour < 6;
@@ -427,10 +435,12 @@ function weatherAlerts(weatherCode, temp, feels, humidity, wind, pop) {
   const alerts = [];
   const isHeavyRain = [65, 82].includes(weatherCode);
   const isStorm = [95, 96, 99].includes(weatherCode);
+  const isSnow = [71, 73, 75, 77, 85, 86].includes(weatherCode);
 
   if (isStorm || wind >= 17.2) alerts.push({ symbol: "⚠", label: "강풍 주의" });
   if (isHeavyRain) alerts.push({ symbol: "╱╱", label: "폭우 주의" });
   if (isStorm) alerts.push({ symbol: "ϟ", label: "폭풍우 주의" });
+  if (isSnow) alerts.push({ symbol: "❄", label: "눈길 미끄럼 주의" });
   if (temp <= -10 || feels <= -15) alerts.push({ symbol: "❄", label: "한파 주의" });
   if (temp >= 33 || feels >= 35) alerts.push({ symbol: "☀", label: "폭염 주의" });
   if (humidity <= 30 && pop < 20) alerts.push({ symbol: "◌", label: "건조 주의" });
@@ -770,8 +780,9 @@ export default function App() {
   const effPop = effectiveHour?.pop ?? weather.pop;
   const effHumidity = effectiveHour?.humidity ?? weather.humidity;
   const effWind = effectiveHour?.wind ?? weather.wind;
+  const effWeatherCode = effectiveHour?.weatherCode ?? weather.weatherCode;
   const localRec = weather.status === "ok"
-    ? outfitFor(effTemp, effFeels, effPop, effHumidity, effWind, profile, aqi, weather.weatherCode, wardrobe)
+    ? outfitFor(effTemp, effFeels, effPop, effHumidity, effWind, profile, aqi, effWeatherCode, wardrobe)
     : null;
   // AI(Gemini)가 응답을 준 경우 items/tips만 AI 결과로 교체하고, band/eng/desc 등은 그대로 로컬 계산을 사용한다.
   // AI 호출이 아직 안 끝났거나 실패하면 자연스럽게 로컬 규칙 기반 추천이 그대로 보인다.
@@ -782,10 +793,19 @@ export default function App() {
         tips: aiRec?.tips?.length ? [...aiRec.tips] : [...localRec.tips],
       }
     : null;
+  if (rec && SNOW_WEATHER_CODES.has(effWeatherCode)) {
+    rec.items = [
+      ...rec.items.filter((item) => item.cat !== "shoes" && item.cat !== "acc"),
+      { cat: "shoes", label: CATEGORY_LABEL.shoes, item: "미끄럼 방지 방한 부츠", flag: "MUST" },
+      { cat: "acc", label: CATEGORY_LABEL.acc, item: "방한 장갑", flag: "MUST" },
+    ];
+    const snowTip = "눈이 와요. 미끄럼 방지 신발을 신고 빙판길에서는 천천히 걸어주세요.";
+    if (!rec.tips.includes(snowTip)) rec.tips.unshift(snowTip);
+  }
   if (rec) rec.headline = seasonalHeadline(rec.band, todayStr);
   const analysis = analyzeRecords(records);
   const visibleHourRange = showTomorrow ? displayedHourly?.length ?? 0 : hourRange;
-  const alerts = weather.status === "ok" ? weatherAlerts(weather.weatherCode, effTemp, effFeels, effHumidity, effWind, effPop) : [];
+  const alerts = weather.status === "ok" ? weatherAlerts(effWeatherCode, effTemp, effFeels, effHumidity, effWind, effPop) : [];
 
   if (rec && analysis.ready) {
     if (analysis.coldThreshold != null && effFeels <= analysis.coldThreshold + 2) {
@@ -821,7 +841,7 @@ export default function App() {
         pop: effPop,
         humidity: effHumidity,
         wind: effWind,
-        weatherCode: weather.weatherCode,
+        weatherCode: effWeatherCode,
         aqiLabel: aqi?.label,
         band: localRec.band,
         profile,
@@ -847,7 +867,7 @@ export default function App() {
     effPop,
     effHumidity,
     effWind,
-    weather.weatherCode,
+    effWeatherCode,
     localRec?.band,
     aqi?.label,
     JSON.stringify(profile),
@@ -996,7 +1016,7 @@ export default function App() {
                userSelect: "none",
                }}
             >
-               {weatherSymbol(weather.weatherCode, effPop, effectiveHour?.hour ?? Number(localTime.slice(0, 2)))}
+               {weatherSymbol(effWeatherCode, effPop, effectiveHour?.hour ?? Number(localTime.slice(0, 2)))}
             </div>
             {alerts.length > 0 && (
               <div
@@ -1719,4 +1739,3 @@ export default function App() {
     </div>
   );
 }
-
