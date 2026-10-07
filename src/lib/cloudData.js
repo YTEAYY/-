@@ -9,6 +9,7 @@ export function normalizeAppData(data = {}) {
     favorites: Array.isArray(data.favorites) ? data.favorites : [],
     wardrobe: Array.isArray(data.wardrobe) ? data.wardrobe : [],
     unit: data.unit === "F" ? "F" : "C",
+    colorScheme: data.colorScheme === "light" ? "light" : "dark",
   };
 }
 

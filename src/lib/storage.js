@@ -3,6 +3,7 @@ const PROFILE_KEY = "ootd-profile-v1";
 const FAVORITES_KEY = "ootd-favorites-v1";
 const WARDROBE_KEY = "ootd-wardrobe-v1";
 const UNIT_KEY = "ootd-unit-v1";
+const COLOR_SCHEME_KEY = "ootd-color-scheme-v1";
 let storageScope = null;
 
 export function setStorageScope(userId = null) {
@@ -58,6 +59,26 @@ export function saveUnit(unit) {
   }
 }
 
+function readColorScheme(key) {
+  try {
+    return localStorage.getItem(key) === "light" ? "light" : "dark";
+  } catch (error) {
+    return "dark";
+  }
+}
+
+export function loadColorScheme() {
+  return readColorScheme(scopedKey(COLOR_SCHEME_KEY));
+}
+
+export function saveColorScheme(scheme) {
+  try {
+    localStorage.setItem(scopedKey(COLOR_SCHEME_KEY), scheme === "light" ? "light" : "dark");
+  } catch (error) {
+    console.error("화면 색상 설정 저장 실패", error);
+  }
+}
+
 export function loadLegacyAppData() {
   const readLegacyJson = (key, fallback) => readJson(key, fallback);
   let legacyUnit = "C";
@@ -72,6 +93,7 @@ export function loadLegacyAppData() {
     favorites: readLegacyJson(FAVORITES_KEY, []),
     wardrobe: readLegacyJson(WARDROBE_KEY, []),
     unit: legacyUnit,
+    colorScheme: readColorScheme(COLOR_SCHEME_KEY),
   };
 }
 
@@ -82,6 +104,7 @@ export function loadCurrentAppData() {
     favorites: loadFavorites(),
     wardrobe: loadWardrobe(),
     unit: loadUnit(),
+    colorScheme: loadColorScheme(),
   };
 }
 
@@ -91,4 +114,5 @@ export function saveAppData(data) {
   saveFavorites(data.favorites);
   saveWardrobe(data.wardrobe);
   saveUnit(data.unit);
+  saveColorScheme(data.colorScheme);
 }
