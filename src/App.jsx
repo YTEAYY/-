@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { dateInTimezone, fmtDate, fmtTemp, pad, seasonFor } from "./lib/date";
  
 import {
@@ -12,7 +12,13 @@ import {
   saveRecords,
   saveUnit,
   saveWardrobe,
+  loadCurrentAppData,
+  loadLegacyAppData,
+  saveAppData,
+  setStorageScope,
 } from "./lib/storage";
+import { loadCloudData, normalizeAppData, saveCloudData } from "./lib/cloudData";
+import { supabase, supabaseConfigured } from "./lib/supabase";
 import { useWeather } from "./hooks/useWeather";
 import { TOKENS } from "./constants";
 import { Eyebrow, FeelingMark, SectionToggle } from "./components/common";
@@ -472,28 +478,71 @@ function GlobalStyle() {
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const MIN_PASSWORD_LENGTH = 8;
 
-function AuthPage({ onComplete }) {
+function AuthPage({ onComplete, initialError = "" }) {
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState(initialError);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
-    if (!EMAIL_REGEX.test(email.trim())) {
-      window.alert("올바른 이메일 형식을 입력해주세요. (예: name@example.com)");
+    setError("");
+    setMessage("");
+    if (!supabase) {
+      setError("인증 서버 설정이 완료되지 않았어요. 관리자에게 문의해주세요.");
       return;
     }
-    if (password.length < MIN_PASSWORD_LENGTH) {
-      window.alert(`비밀번호는 ${MIN_PASSWORD_LENGTH}자 이상이어야 해요.`);
+    if (!EMAIL_REGEX.test(email.trim())) {
+      setError("올바른 이메일 형식을 입력해주세요. (예: name@example.com)");
+      return;
+    }
+    if (mode !== "reset" && password.length < MIN_PASSWORD_LENGTH) {
+      setError(`비밀번호는 ${MIN_PASSWORD_LENGTH}자 이상이어야 해요.`);
       return;
     }
     if (mode === "signup" && password !== passwordConfirm) {
-      window.alert("비밀번호가 일치하지 않습니다.");
+      setError("비밀번호가 일치하지 않습니다.");
       return;
     }
-    sessionStorage.setItem("ootd-auth-ui-seen", "true");
-    onComplete();
+    setIsSubmitting(true);
+    try {
+      const normalizedEmail = email.trim().toLowerCase();
+      if (mode === "reset") {
+        const { error: resetError } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+          redirectTo: window.location.origin,
+        });
+        if (resetError) throw resetError;
+        setMessage("비밀번호 재설정 링크를 이메일로 보냈어요.");
+      } else if (mode === "signup") {
+        const { data, error: signUpError } = await supabase.auth.signUp({
+          email: normalizedEmail,
+          password,
+          options: { emailRedirectTo: window.location.origin },
+        });
+        if (signUpError) throw signUpError;
+        if (data.session && data.user) {
+          await onComplete(data.user);
+        } else {
+          setMessage("가입 확인 링크를 이메일로 보냈어요. 메일에서 인증을 완료해주세요.");
+        }
+      } else {
+        const { data, error: signInError } = await supabase.auth.signInWithPassword({
+          email: normalizedEmail,
+          password,
+        });
+        if (signInError) throw signInError;
+        if (!data.user) throw new Error("로그인 정보를 확인하지 못했어요.");
+        await onComplete(data.user);
+      }
+    } catch (requestError) {
+      const messageText = requestError?.message || "요청을 처리하지 못했어요. 잠시 후 다시 시도해주세요.";
+      setError(messageText === "Invalid login credentials" ? "이메일 또는 비밀번호를 확인해주세요." : messageText);
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   const inputStyle = {
@@ -545,6 +594,14 @@ function AuthPage({ onComplete }) {
           ))}
         </div>
 
+        {!supabaseConfigured && (
+          <p role="alert" style={{ fontSize: 12.5, color: "#ff9b8f", lineHeight: 1.6, margin: "0 0 18px" }}>
+            Supabase 설정이 필요해요. 프로젝트 URL과 공개 anon 키를 환경 변수에 등록한 뒤 다시 배포해주세요.
+          </p>
+        )}
+        {error && <p role="alert" style={{ fontSize: 12.5, color: "#ff9b8f", lineHeight: 1.6, margin: "0 0 18px" }}>{error}</p>}
+        {message && <p role="status" style={{ fontSize: 12.5, color: TOKENS.accent, lineHeight: 1.6, margin: "0 0 18px" }}>{message}</p>}
+
         <form onSubmit={handleSubmit}>
           <label style={{ display: "block", color: TOKENS.fgDim, fontFamily: TOKENS.fontDisplay, fontSize: 11, letterSpacing: "0.1em", marginBottom: 8 }}>
             EMAIL
@@ -554,7 +611,7 @@ function AuthPage({ onComplete }) {
           <label style={{ display: "block", color: TOKENS.fgDim, fontFamily: TOKENS.fontDisplay, fontSize: 11, letterSpacing: "0.1em", marginBottom: 8 }}>
             PASSWORD
           </label>
-          <input type="password" required minLength={MIN_PASSWORD_LENGTH} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="비밀번호 (8자 이상)" style={{ ...inputStyle, marginBottom: mode === "signup" ? 8 : 24 }} />
+          {mode !== "reset" && <input type="password" required minLength={MIN_PASSWORD_LENGTH} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="비밀번호 (8자 이상)" style={{ ...inputStyle, marginBottom: mode === "signup" ? 8 : 24 }} />}
           {mode === "signup" && (
             <p style={{ color: TOKENS.fgDim, fontSize: 11.5, margin: "0 0 18px" }}>영문/숫자 조합 8자 이상을 권장해요.</p>
           )}
@@ -563,8 +620,76 @@ function AuthPage({ onComplete }) {
             <input type="password" required minLength={MIN_PASSWORD_LENGTH} value={passwordConfirm} onChange={(event) => setPasswordConfirm(event.target.value)} placeholder="비밀번호를 한 번 더 입력해주세요" style={{ ...inputStyle, marginBottom: 24 }} />
           )}
 
-          <button type="submit" style={{ width: "100%", border: "none", background: TOKENS.accent, color: TOKENS.bg, padding: "15px 0", fontFamily: TOKENS.fontDisplay, fontSize: 14, fontWeight: 700, letterSpacing: "0.06em", cursor: "pointer" }}>
-            {mode === "login" ? "로그인" : "회원가입"}
+          <button type="submit" disabled={isSubmitting || !supabaseConfigured} style={{ width: "100%", border: "none", background: TOKENS.accent, color: TOKENS.bg, padding: "15px 0", fontFamily: TOKENS.fontDisplay, fontSize: 14, fontWeight: 700, letterSpacing: "0.06em", cursor: isSubmitting || !supabaseConfigured ? "not-allowed" : "pointer", opacity: isSubmitting || !supabaseConfigured ? 0.6 : 1 }}>
+            {isSubmitting ? "처리 중…" : mode === "login" ? "로그인" : mode === "signup" ? "회원가입" : "재설정 메일 보내기"}
+          </button>
+        </form>
+        {mode === "login" && (
+          <button type="button" onClick={() => { setMode("reset"); setError(""); setMessage(""); }} style={{ width: "100%", background: "none", border: "none", color: TOKENS.fgDim, padding: "14px 0 0", fontSize: 12, cursor: "pointer" }}>
+            비밀번호를 잊으셨나요?
+          </button>
+        )}
+        {mode === "reset" && (
+          <button type="button" onClick={() => { setMode("login"); setError(""); setMessage(""); }} style={{ width: "100%", background: "none", border: "none", color: TOKENS.fgDim, padding: "14px 0 0", fontSize: 12, cursor: "pointer" }}>
+            로그인으로 돌아가기
+          </button>
+        )}
+      </main>
+    </div>
+  );
+}
+
+function hasAppData(data) {
+  return (
+    Object.keys(data.records || {}).length > 0 ||
+    (data.favorites || []).length > 0 ||
+    (data.wardrobe || []).length > 0 ||
+    data.unit === "F" ||
+    Boolean(data.profile?.gender || data.profile?.age || data.profile?.birthday || data.profile?.health?.length || data.profile?.healthOther)
+  );
+}
+
+function PasswordRecoveryPage({ onComplete }) {
+  const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
+  const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setError("");
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setError(`비밀번호는 ${MIN_PASSWORD_LENGTH}자 이상이어야 해요.`);
+      return;
+    }
+    if (password !== passwordConfirm) {
+      setError("비밀번호가 일치하지 않습니다.");
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      const { error: updateError } = await supabase.auth.updateUser({ password });
+      if (updateError) throw updateError;
+      onComplete();
+    } catch (requestError) {
+      setError(requestError?.message || "비밀번호를 변경하지 못했어요.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="ootd-scope" style={{ minHeight: "100vh", background: TOKENS.bg, color: TOKENS.fg }}>
+      <GlobalStyle />
+      <main style={{ maxWidth: 430, margin: "0 auto", padding: "20vh 20px 48px", fontFamily: TOKENS.fontBody }}>
+        <Eyebrow style={{ color: TOKENS.accent, marginBottom: 12 }}>PASSWORD RESET</Eyebrow>
+        <h1 style={{ fontFamily: TOKENS.fontDisplay, fontSize: 36, margin: "0 0 18px" }}>새 비밀번호 설정</h1>
+        {error && <p role="alert" style={{ color: "#ff9b8f", fontSize: 12.5, lineHeight: 1.6 }}>{error}</p>}
+        <form onSubmit={handleSubmit}>
+          <input type="password" required minLength={MIN_PASSWORD_LENGTH} autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="새 비밀번호 (8자 이상)" style={{ width: "100%", background: "none", border: `1px solid ${TOKENS.rule}`, color: TOKENS.fg, padding: "13px 14px", fontSize: 14, marginBottom: 12 }} />
+          <input type="password" required minLength={MIN_PASSWORD_LENGTH} autoComplete="new-password" value={passwordConfirm} onChange={(event) => setPasswordConfirm(event.target.value)} placeholder="새 비밀번호 확인" style={{ width: "100%", background: "none", border: `1px solid ${TOKENS.rule}`, color: TOKENS.fg, padding: "13px 14px", fontSize: 14, marginBottom: 20 }} />
+          <button type="submit" disabled={isSubmitting} style={{ width: "100%", border: "none", background: TOKENS.accent, color: TOKENS.bg, padding: "15px 0", fontFamily: TOKENS.fontDisplay, fontSize: 14, fontWeight: 700, cursor: isSubmitting ? "wait" : "pointer" }}>
+            {isSubmitting ? "저장 중…" : "비밀번호 변경"}
           </button>
         </form>
       </main>
@@ -576,7 +701,13 @@ function AuthPage({ onComplete }) {
    메인 App
    ============================================================ */
 export default function App() {
-  const [authUiSeen, setAuthUiSeen] = useState(() => sessionStorage.getItem("ootd-auth-ui-seen") === "true");
+  const [authUser, setAuthUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState("");
+  const [isDataReady, setIsDataReady] = useState(false);
+  const [dataSyncStatus, setDataSyncStatus] = useState("synced");
+  const [syncRevision, setSyncRevision] = useState(0);
+  const [passwordRecovery, setPasswordRecovery] = useState(false);
   const [records, setRecords] = useState(() => loadRecords());
   const [profile, setProfile] = useState(() => loadProfile());
   const [favorites, setFavorites] = useState(() => loadFavorites());
@@ -615,8 +746,154 @@ export default function App() {
   const hourlyScrollRef = useRef(null);
   const hourlyDragRef = useRef({ active: false, startX: 0, scrollLeft: 0 });
   const aiRequestIdRef = useRef(0);
+  const hydrationRef = useRef({ userId: null, requestId: 0, promise: null });
+  const dataReadyRef = useRef(false);
+  const syncQueueRef = useRef(Promise.resolve());
+  const syncTimerRef = useRef(null);
+  const syncRequestRef = useRef(0);
+  const [logoutError, setLogoutError] = useState("");
+  const [logoutSaving, setLogoutSaving] = useState(false);
   const [aiRec, setAiRec] = useState(null);
   const [aiStatus, setAiStatus] = useState("idle"); // idle | loading | done | error
+
+  const hydrateUserData = useCallback((user) => {
+    if (hydrationRef.current.userId === user.id && hydrationRef.current.promise) {
+      return hydrationRef.current.promise;
+    }
+
+    const requestId = hydrationRef.current.requestId + 1;
+    hydrationRef.current = { userId: user.id, requestId, promise: null };
+    dataReadyRef.current = false;
+    setAuthUser(user);
+    setAuthError("");
+    setIsDataReady(false);
+    setDataSyncStatus("loading");
+    setStorageScope(user.id);
+
+    const promise = (async () => {
+      const cachedData = normalizeAppData(loadCurrentAppData());
+      const cloudData = await loadCloudData(user.id);
+      const appData = cloudData || (hasAppData(cachedData) ? cachedData : normalizeAppData(loadLegacyAppData()));
+      if (!cloudData) await saveCloudData(user.id, appData);
+      if (hydrationRef.current.requestId !== requestId) return;
+
+      saveAppData(appData);
+      setRecords(appData.records);
+      setProfile(appData.profile);
+      setFavorites(appData.favorites);
+      setWardrobe(appData.wardrobe);
+      setUnit(appData.unit);
+      dataReadyRef.current = true;
+      setIsDataReady(true);
+      setDataSyncStatus("synced");
+    })().catch((error) => {
+      if (hydrationRef.current.requestId === requestId) {
+        dataReadyRef.current = false;
+        setAuthError(`계정 데이터를 불러오지 못했어요. 네트워크와 Supabase 테이블 설정을 확인해주세요. (${error?.message || "알 수 없는 오류"})`);
+        setDataSyncStatus("error");
+      }
+      throw error;
+    }).finally(() => {
+      if (hydrationRef.current.requestId === requestId) hydrationRef.current.promise = null;
+    });
+
+    hydrationRef.current.promise = promise;
+    return promise;
+  }, []);
+
+  const clearAuthenticatedUser = useCallback(() => {
+    hydrationRef.current = { userId: null, requestId: hydrationRef.current.requestId + 1, promise: null };
+    dataReadyRef.current = false;
+    setStorageScope(null);
+    setAuthUser(null);
+    setAuthError("");
+    setIsDataReady(false);
+    setDataSyncStatus("synced");
+    setRecords({});
+    setProfile({ gender: "", age: "", health: [], healthOther: "", birthday: "" });
+    setFavorites([]);
+    setWardrobe([]);
+    setUnit("C");
+  }, []);
+
+  useEffect(() => {
+    if (!supabase) {
+      setAuthLoading(false);
+      return undefined;
+    }
+
+    let active = true;
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!active) return;
+      if (event === "PASSWORD_RECOVERY") setPasswordRecovery(true);
+      if (session?.user) {
+        setAuthUser(session.user);
+        Promise.resolve().then(() => hydrateUserData(session.user).catch(() => {}));
+      } else {
+        clearAuthenticatedUser();
+        if (event === "SIGNED_OUT") setPasswordRecovery(false);
+      }
+    });
+
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (!active) return;
+      if (error) {
+        setAuthError(`로그인 상태를 확인하지 못했어요. (${error.message})`);
+        setAuthLoading(false);
+        return;
+      }
+      if (!data.session?.user) {
+        clearAuthenticatedUser();
+        setAuthLoading(false);
+        return;
+      }
+      return hydrateUserData(data.session.user)
+        .catch(() => {})
+        .finally(() => {
+          if (active) setAuthLoading(false);
+        });
+    }).catch((error) => {
+      if (!active) return;
+      setAuthError(`로그인 상태를 확인하지 못했어요. (${error?.message || "알 수 없는 오류"})`);
+      setAuthLoading(false);
+    });
+
+    return () => {
+      active = false;
+      authListener.subscription.unsubscribe();
+    };
+  }, [clearAuthenticatedUser, hydrateUserData]);
+
+  useEffect(() => {
+    if (!authUser || !isDataReady || !dataReadyRef.current) return undefined;
+    const requestId = ++syncRequestRef.current;
+    const userId = authUser.id;
+    const appData = normalizeAppData({ records, profile, favorites, wardrobe, unit });
+    const timer = setTimeout(() => {
+      syncTimerRef.current = null;
+      setDataSyncStatus("saving");
+      syncQueueRef.current = syncQueueRef.current
+        .catch(() => {})
+        .then(() => saveCloudData(userId, appData))
+        .then(() => {
+          if (syncRequestRef.current === requestId) {
+            setDataSyncStatus("synced");
+            setAuthError("");
+          }
+        })
+        .catch((error) => {
+          if (syncRequestRef.current === requestId) {
+            setDataSyncStatus("error");
+            setAuthError(`클라우드 저장에 실패했어요. 변경 내용은 이 기기에 보관돼요. (${error?.message || "알 수 없는 오류"})`);
+          }
+        });
+    }, 700);
+    syncTimerRef.current = timer;
+    return () => {
+      clearTimeout(timer);
+      if (syncTimerRef.current === timer) syncTimerRef.current = null;
+    };
+  }, [authUser, isDataReady, records, profile, favorites, wardrobe, unit, syncRevision]);
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 60 * 1000);
     return () => clearInterval(timer);
@@ -683,13 +960,32 @@ export default function App() {
   }
 
   function logout() {
+    setLogoutError("");
     setLogoutOpen(true);
   }
 
-  function confirmLogout() {
-    sessionStorage.removeItem("ootd-auth-ui-seen");
-    setLogoutOpen(false);
-    setAuthUiSeen(false);
+  async function confirmLogout() {
+    if (!supabase || !authUser || logoutSaving) return;
+    setLogoutSaving(true);
+    setLogoutError("");
+    let dataSaved = false;
+    try {
+      if (syncTimerRef.current) {
+        clearTimeout(syncTimerRef.current);
+        syncTimerRef.current = null;
+      }
+      await syncQueueRef.current.catch(() => {});
+      await saveCloudData(authUser.id, normalizeAppData({ records, profile, favorites, wardrobe, unit }));
+      dataSaved = true;
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      setLogoutOpen(false);
+    } catch (error) {
+      const action = dataSaved ? "로그아웃하지 못했어요" : "계정 데이터를 저장하지 못했어요";
+      setLogoutError(`${action}. 다시 시도해주세요. (${error?.message || "알 수 없는 오류"})`);
+    } finally {
+      setLogoutSaving(false);
+    }
   }
 
   function handleImportFile(event) {
@@ -881,8 +1177,32 @@ export default function App() {
   }
   const recordedThisMonth = Object.keys(records).filter((k) => k.startsWith(`${year}-${pad(month + 1)}`)).length;
 
-  if (!authUiSeen) {
-    return <AuthPage onComplete={() => setAuthUiSeen(true)} />;
+  if (authLoading) {
+    return (
+      <div className="ootd-scope" style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: TOKENS.bg, color: TOKENS.fg }}>
+        <GlobalStyle />
+        <p role="status" style={{ color: TOKENS.fgMid, fontFamily: TOKENS.fontBody }}>로그인 상태를 확인하고 있어요…</p>
+      </div>
+    );
+  }
+  if (!authUser) {
+    return <AuthPage initialError={authError} onComplete={hydrateUserData} />;
+  }
+  if (passwordRecovery) {
+    return <PasswordRecoveryPage onComplete={() => setPasswordRecovery(false)} />;
+  }
+  if (!isDataReady) {
+    return (
+      <div className="ootd-scope" style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: TOKENS.bg, color: TOKENS.fg }}>
+        <GlobalStyle />
+        <main style={{ maxWidth: 430, padding: 24, fontFamily: TOKENS.fontBody, textAlign: "center" }}>
+          <p role="status" style={{ color: TOKENS.fgMid, lineHeight: 1.7 }}>계정 데이터를 불러오고 있어요…</p>
+          {authError && <p role="alert" style={{ color: "#ff9b8f", fontSize: 12.5, lineHeight: 1.6 }}>{authError}</p>}
+          {authError && <button type="button" onClick={() => hydrateUserData(authUser).catch(() => {})} style={{ background: TOKENS.accent, border: "none", color: TOKENS.bg, padding: "12px 20px", fontWeight: 700, cursor: "pointer" }}>다시 시도</button>}
+          <button type="button" onClick={async () => { const { error } = await supabase.auth.signOut(); if (error) setAuthError(`로그아웃하지 못했어요. (${error.message})`); }} style={{ display: "block", margin: "18px auto 0", background: "none", border: "none", color: TOKENS.fgDim, cursor: "pointer" }}>로그아웃</button>
+        </main>
+      </div>
+    );
   }
 
   return (
@@ -939,6 +1259,18 @@ export default function App() {
           </span>
         </div>
 
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, paddingTop: 10, color: TOKENS.fgDim, fontSize: 11 }}>
+          <span>{authUser.email}</span>
+          <span role="status">
+            {dataSyncStatus === "saving" ? "클라우드 저장 중…" : dataSyncStatus === "error" ? "클라우드 저장 실패" : "클라우드 저장됨"}
+          </span>
+        </div>
+        {authError && dataSyncStatus === "error" && (
+          <div role="alert" style={{ padding: "8px 0 0", color: "#ff9b8f", fontSize: 11.5, lineHeight: 1.6 }}>
+            {authError}
+            <button type="button" onClick={() => setSyncRevision((revision) => revision + 1)} style={{ marginLeft: 8, background: "none", border: "none", color: TOKENS.accent, textDecoration: "underline", cursor: "pointer" }}>다시 저장</button>
+          </div>
+        )}
         {isBirthdayToday && (
           <div style={{ padding: "10px 0 0", fontFamily: TOKENS.fontDisplay, fontSize: 12.5, letterSpacing: "0.04em", color: TOKENS.accent }}>
             🎂 오늘은 생일이에요! 축하해요.
@@ -1728,10 +2060,11 @@ export default function App() {
           >
             <Eyebrow style={{ color: TOKENS.accent, marginBottom: 10 }}>SIGN OUT</Eyebrow>
             <h2 id="logout-title" style={{ fontFamily: TOKENS.fontDisplay, fontSize: 25, margin: 0, lineHeight: 1.1 }}>정말 로그아웃할까요?</h2>
-            <p style={{ color: TOKENS.fgDim, fontSize: 13, lineHeight: 1.6, margin: "12px 0 22px" }}>현재 세션에서 로그아웃합니다. 기록과 프로필 데이터는 이 브라우저에 남아 있어요.</p>
+            <p style={{ color: TOKENS.fgDim, fontSize: 13, lineHeight: 1.6, margin: "12px 0 22px" }}>계정 데이터를 클라우드에 저장한 뒤 로그아웃합니다.</p>
+            {logoutError && <p role="alert" style={{ color: "#ff9b8f", fontSize: 12, lineHeight: 1.6 }}>{logoutError}</p>}
             <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={() => setLogoutOpen(false)} style={{ flex: 1, background: "none", border: `1px solid ${TOKENS.rule}`, color: TOKENS.fgMid, padding: "12px 0", fontFamily: TOKENS.fontDisplay, fontSize: 13, cursor: "pointer" }}>취소</button>
-              <button onClick={confirmLogout} style={{ flex: 1, background: TOKENS.accent, border: `1px solid ${TOKENS.accent}`, color: TOKENS.bg, padding: "12px 0", fontFamily: TOKENS.fontDisplay, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>로그아웃</button>
+              <button onClick={() => setLogoutOpen(false)} disabled={logoutSaving} style={{ flex: 1, background: "none", border: `1px solid ${TOKENS.rule}`, color: TOKENS.fgMid, padding: "12px 0", fontFamily: TOKENS.fontDisplay, fontSize: 13, cursor: logoutSaving ? "wait" : "pointer" }}>취소</button>
+              <button onClick={confirmLogout} disabled={logoutSaving} style={{ flex: 1, background: TOKENS.accent, border: `1px solid ${TOKENS.accent}`, color: TOKENS.bg, padding: "12px 0", fontFamily: TOKENS.fontDisplay, fontSize: 13, fontWeight: 700, cursor: logoutSaving ? "wait" : "pointer" }}>{logoutSaving ? "저장 중…" : "로그아웃"}</button>
             </div>
           </div>
         </div>
