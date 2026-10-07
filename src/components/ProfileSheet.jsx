@@ -42,7 +42,7 @@ export default function ProfileSheet({ existing, onClose, onSave }) {
         <input type="number" min="1" max="100" value={age} onChange={handleAgeChange} placeholder="선택 입력" style={{ width: "100%", background: "none", border: "none", borderBottom: `1px solid ${TOKENS.rule}`, color: TOKENS.fg, padding: "8px 0", fontSize: 14, fontFamily: TOKENS.fontBody, marginBottom: 22 }} />
 
         <Eyebrow style={{ marginBottom: 8 }}>생일 · 선택</Eyebrow>
-        <input type="date" value={birthday} onChange={(event) => setBirthday(event.target.value)} style={{ width: "100%", background: "none", border: "none", borderBottom: `1px solid ${TOKENS.rule}`, color: TOKENS.fg, padding: "8px 0", fontSize: 14, fontFamily: TOKENS.fontBody, marginBottom: 8, colorScheme: "dark" }} />
+        <input type="date" value={birthday} onChange={(event) => setBirthday(event.target.value)} style={{ width: "100%", background: "none", border: "none", borderBottom: `1px solid ${TOKENS.rule}`, color: TOKENS.fg, padding: "8px 0", fontSize: 14, fontFamily: TOKENS.fontBody, marginBottom: 8, colorScheme: TOKENS.bg === "#0c0c0c" ? "dark" : "light" }} />
         <p style={{ margin: "0 0 22px", color: TOKENS.fgDim, fontSize: 11, lineHeight: 1.5 }}>매년 이 날짜(월·일)가 되면 달력과 화면에 생일 표시를 해드려요.</p>
 
         <Eyebrow style={{ marginBottom: 8 }}>건강상 주의사항 · 선택</Eyebrow>
