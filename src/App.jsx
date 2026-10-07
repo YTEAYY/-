@@ -7,11 +7,13 @@ import {
   loadRecords,
   loadUnit,
   loadWardrobe,
+  loadColorScheme,
   saveFavorites,
   saveProfile,
   saveRecords,
   saveUnit,
   saveWardrobe,
+  saveColorScheme,
   loadCurrentAppData,
   loadLegacyAppData,
   saveAppData,
@@ -20,7 +22,7 @@ import {
 import { loadCloudData, normalizeAppData, saveCloudData } from "./lib/cloudData";
 import { supabase, supabaseConfigured } from "./lib/supabase";
 import { useWeather } from "./hooks/useWeather";
-import { TOKENS } from "./constants";
+import { TOKENS, setColorScheme } from "./constants";
 import { Eyebrow, FeelingMark, SectionToggle } from "./components/common";
 import ProfileSheetComponent from "./components/ProfileSheet";
 import { LocationSearchSheet as LocationSearchSheetComponent, RecordSearchSheet as RecordSearchSheetComponent } from "./components/SearchSheets";
@@ -35,6 +37,34 @@ function bandToWarmth(band) {
   if (band === "boiling" || band === "hot") return "hot";
   if (band === "cool" || band === "cold") return "cold";
   return "mild";
+}
+
+function wardrobeOutfitFor(wardrobe, band, rotation = 0, weatherCode = null) {
+  const wantedWarmth = bandToWarmth(band);
+  const warmthOptions = {
+    hot: ["hot", "mild"],
+    mild: ["mild", "cold", "hot"],
+    cold: ["cold", "mild"],
+  }[wantedWarmth] || [wantedWarmth];
+  const unsafeShoes = SNOW_WEATHER_CODES.has(weatherCode) || [95, 96, 99].includes(weatherCode);
+
+  let combinationOffset = 1;
+  const entries = CATEGORY_ORDER
+    .filter((category) => !(category === "shoes" && unsafeShoes))
+    .map((category) => {
+      const choices = wardrobe.filter((item) => item.category === category && warmthOptions.includes(item.warmth));
+      if (!choices.length) return null;
+      const choiceIndex = Math.floor(rotation / combinationOffset) % choices.length;
+      combinationOffset *= choices.length;
+      return {
+        category,
+        item: choices[choiceIndex],
+        choiceCount: choices.length,
+      };
+    })
+    .filter(Boolean);
+  const combinationCount = entries.reduce((total, entry) => total * entry.choiceCount, 1);
+  return { entries, combinationCount, unsafeShoes };
 }
 
 const WEEK_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
@@ -595,11 +625,11 @@ function AuthPage({ onComplete, initialError = "" }) {
         </div>
 
         {!supabaseConfigured && (
-          <p role="alert" style={{ fontSize: 12.5, color: "#ff9b8f", lineHeight: 1.6, margin: "0 0 18px" }}>
+          <p role="alert" style={{ fontSize: 12.5, color: TOKENS.danger, lineHeight: 1.6, margin: "0 0 18px" }}>
             Supabase 설정이 필요해요. 프로젝트 URL과 공개 anon 키를 환경 변수에 등록한 뒤 다시 배포해주세요.
           </p>
         )}
-        {error && <p role="alert" style={{ fontSize: 12.5, color: "#ff9b8f", lineHeight: 1.6, margin: "0 0 18px" }}>{error}</p>}
+        {error && <p role="alert" style={{ fontSize: 12.5, color: TOKENS.danger, lineHeight: 1.6, margin: "0 0 18px" }}>{error}</p>}
         {message && <p role="status" style={{ fontSize: 12.5, color: TOKENS.accent, lineHeight: 1.6, margin: "0 0 18px" }}>{message}</p>}
 
         <form onSubmit={handleSubmit}>
@@ -645,6 +675,7 @@ function hasAppData(data) {
     (data.favorites || []).length > 0 ||
     (data.wardrobe || []).length > 0 ||
     data.unit === "F" ||
+    data.colorScheme === "light" ||
     Boolean(data.profile?.gender || data.profile?.age || data.profile?.birthday || data.profile?.health?.length || data.profile?.healthOther)
   );
 }
@@ -684,7 +715,7 @@ function PasswordRecoveryPage({ onComplete }) {
       <main style={{ maxWidth: 430, margin: "0 auto", padding: "20vh 20px 48px", fontFamily: TOKENS.fontBody }}>
         <Eyebrow style={{ color: TOKENS.accent, marginBottom: 12 }}>PASSWORD RESET</Eyebrow>
         <h1 style={{ fontFamily: TOKENS.fontDisplay, fontSize: 36, margin: "0 0 18px" }}>새 비밀번호 설정</h1>
-        {error && <p role="alert" style={{ color: "#ff9b8f", fontSize: 12.5, lineHeight: 1.6 }}>{error}</p>}
+        {error && <p role="alert" style={{ color: TOKENS.danger, fontSize: 12.5, lineHeight: 1.6 }}>{error}</p>}
         <form onSubmit={handleSubmit}>
           <input type="password" required minLength={MIN_PASSWORD_LENGTH} autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="새 비밀번호 (8자 이상)" style={{ width: "100%", background: "none", border: `1px solid ${TOKENS.rule}`, color: TOKENS.fg, padding: "13px 14px", fontSize: 14, marginBottom: 12 }} />
           <input type="password" required minLength={MIN_PASSWORD_LENGTH} autoComplete="new-password" value={passwordConfirm} onChange={(event) => setPasswordConfirm(event.target.value)} placeholder="새 비밀번호 확인" style={{ width: "100%", background: "none", border: `1px solid ${TOKENS.rule}`, color: TOKENS.fg, padding: "13px 14px", fontSize: 14, marginBottom: 20 }} />
@@ -713,6 +744,12 @@ export default function App() {
   const [favorites, setFavorites] = useState(() => loadFavorites());
   const [wardrobe, setWardrobe] = useState(() => loadWardrobe());
   const [unit, setUnit] = useState(() => loadUnit());
+  const [colorScheme, setColorSchemeState] = useState(() => {
+    const scheme = loadColorScheme();
+    setColorScheme(scheme);
+    return scheme;
+  });
+  const [wardrobeOutfitIndex, setWardrobeOutfitIndex] = useState(0);
   const [wardrobeOpen, setWardrobeOpen] = useState(false);
   const [searchSheetOpen, setSearchSheetOpen] = useState(false);
   const {
@@ -783,6 +820,8 @@ export default function App() {
       setFavorites(appData.favorites);
       setWardrobe(appData.wardrobe);
       setUnit(appData.unit);
+      setColorSchemeState(appData.colorScheme);
+      setColorScheme(appData.colorScheme);
       dataReadyRef.current = true;
       setIsDataReady(true);
       setDataSyncStatus("synced");
@@ -814,6 +853,9 @@ export default function App() {
     setFavorites([]);
     setWardrobe([]);
     setUnit("C");
+    const guestColorScheme = loadColorScheme();
+    setColorSchemeState(guestColorScheme);
+    setColorScheme(guestColorScheme);
   }, []);
 
   useEffect(() => {
@@ -868,7 +910,7 @@ export default function App() {
     if (!authUser || !isDataReady || !dataReadyRef.current) return undefined;
     const requestId = ++syncRequestRef.current;
     const userId = authUser.id;
-    const appData = normalizeAppData({ records, profile, favorites, wardrobe, unit });
+    const appData = normalizeAppData({ records, profile, favorites, wardrobe, unit, colorScheme });
     const timer = setTimeout(() => {
       syncTimerRef.current = null;
       setDataSyncStatus("saving");
@@ -893,7 +935,7 @@ export default function App() {
       clearTimeout(timer);
       if (syncTimerRef.current === timer) syncTimerRef.current = null;
     };
-  }, [authUser, isDataReady, records, profile, favorites, wardrobe, unit, syncRevision]);
+  }, [authUser, isDataReady, records, profile, favorites, wardrobe, unit, colorScheme, syncRevision]);
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 60 * 1000);
     return () => clearInterval(timer);
@@ -959,6 +1001,15 @@ export default function App() {
     });
   }
 
+  function toggleColorScheme() {
+    setColorSchemeState((current) => {
+      const next = current === "dark" ? "light" : "dark";
+      setColorScheme(next);
+      saveColorScheme(next);
+      return next;
+    });
+  }
+
   function logout() {
     setLogoutError("");
     setLogoutOpen(true);
@@ -975,7 +1026,7 @@ export default function App() {
         syncTimerRef.current = null;
       }
       await syncQueueRef.current.catch(() => {});
-      await saveCloudData(authUser.id, normalizeAppData({ records, profile, favorites, wardrobe, unit }));
+      await saveCloudData(authUser.id, normalizeAppData({ records, profile, favorites, wardrobe, unit, colorScheme }));
       dataSaved = true;
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
@@ -1089,6 +1140,9 @@ export default function App() {
         tips: aiRec?.tips?.length ? [...aiRec.tips] : [...localRec.tips],
       }
     : null;
+  const wardrobeOutfit = rec
+    ? wardrobeOutfitFor(wardrobe, rec.band, wardrobeOutfitIndex, effWeatherCode)
+    : null;
   if (rec && SNOW_WEATHER_CODES.has(effWeatherCode)) {
     rec.items = [
       ...rec.items.filter((item) => item.cat !== "shoes" && item.cat !== "acc"),
@@ -1197,7 +1251,7 @@ export default function App() {
         <GlobalStyle />
         <main style={{ maxWidth: 430, padding: 24, fontFamily: TOKENS.fontBody, textAlign: "center" }}>
           <p role="status" style={{ color: TOKENS.fgMid, lineHeight: 1.7 }}>계정 데이터를 불러오고 있어요…</p>
-          {authError && <p role="alert" style={{ color: "#ff9b8f", fontSize: 12.5, lineHeight: 1.6 }}>{authError}</p>}
+          {authError && <p role="alert" style={{ color: TOKENS.danger, fontSize: 12.5, lineHeight: 1.6 }}>{authError}</p>}
           {authError && <button type="button" onClick={() => hydrateUserData(authUser).catch(() => {})} style={{ background: TOKENS.accent, border: "none", color: TOKENS.bg, padding: "12px 20px", fontWeight: 700, cursor: "pointer" }}>다시 시도</button>}
           <button type="button" onClick={async () => { const { error } = await supabase.auth.signOut(); if (error) setAuthError(`로그아웃하지 못했어요. (${error.message})`); }} style={{ display: "block", margin: "18px auto 0", background: "none", border: "none", color: TOKENS.fgDim, cursor: "pointer" }}>로그아웃</button>
         </main>
@@ -1253,6 +1307,15 @@ export default function App() {
             >
               °{unit}
             </button>
+            <button
+              type="button"
+              onClick={toggleColorScheme}
+              style={{ background: "none", border: `1px solid ${TOKENS.rule}`, cursor: "pointer", padding: "2px 7px", fontFamily: TOKENS.fontDisplay, fontSize: 11, color: TOKENS.fgDim, whiteSpace: "nowrap" }}
+              aria-label="화면 색상 반전"
+              title={colorScheme === "dark" ? "밝은 화면으로 전환" : "어두운 화면으로 전환"}
+            >
+              ◐
+            </button>
           </div>
           <span style={{ fontFamily: TOKENS.fontDisplay, fontSize: 13, letterSpacing: "0.08em", color: TOKENS.fgDim }}>
             {todayLabel}
@@ -1266,7 +1329,7 @@ export default function App() {
           </span>
         </div>
         {authError && dataSyncStatus === "error" && (
-          <div role="alert" style={{ padding: "8px 0 0", color: "#ff9b8f", fontSize: 11.5, lineHeight: 1.6 }}>
+          <div role="alert" style={{ padding: "8px 0 0", color: TOKENS.danger, fontSize: 11.5, lineHeight: 1.6 }}>
             {authError}
             <button type="button" onClick={() => setSyncRevision((revision) => revision + 1)} style={{ marginLeft: 8, background: "none", border: "none", color: TOKENS.accent, textDecoration: "underline", cursor: "pointer" }}>다시 저장</button>
           </div>
@@ -1643,6 +1706,62 @@ export default function App() {
               >
                 ◆ 오늘 프로필 반영됨: {rec.profileNotes.join(" · ")}
               </div>
+            )}
+
+            {wardrobe.length > 0 && (
+              <section
+                aria-label="내 옷으로 코디 제안"
+                style={{
+                  background: TOKENS.bgRaised,
+                  border: `1px solid ${TOKENS.rule}`,
+                  padding: "16px 14px",
+                  marginBottom: 18,
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 12 }}>
+                  <div>
+                    <Eyebrow style={{ color: TOKENS.accent, marginBottom: 4 }}>MY WARDROBE</Eyebrow>
+                    <div style={{ fontFamily: TOKENS.fontDisplay, fontSize: 19, fontWeight: 700 }}>내 옷으로 코디 제안</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setWardrobeOpen(true)}
+                    style={{ background: "none", border: `1px solid ${TOKENS.rule}`, color: TOKENS.fgMid, padding: "7px 9px", fontFamily: TOKENS.fontDisplay, fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}
+                  >
+                    옷장 관리
+                  </button>
+                </div>
+                {wardrobeOutfit.entries.length > 0 ? (
+                  <>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+                      {wardrobeOutfit.entries.map(({ category, item }) => (
+                        <div key={category} style={{ borderTop: `1px solid ${TOKENS.rule}`, paddingTop: 8 }}>
+                          <Eyebrow style={{ marginBottom: 3 }}>{CATEGORY_LABEL[category]}</Eyebrow>
+                          <div style={{ fontSize: 13, lineHeight: 1.4 }}>{item.name}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {wardrobeOutfit.unsafeShoes && (
+                      <p style={{ color: TOKENS.fgMid, fontSize: 11.5, lineHeight: 1.5, margin: "10px 0 0" }}>
+                        날씨 안전을 위해 신발은 기본 추천(방수 또는 미끄럼 방지)을 우선 확인해주세요.
+                      </p>
+                    )}
+                    {wardrobeOutfit.combinationCount > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => setWardrobeOutfitIndex((index) => (index + 1) % wardrobeOutfit.combinationCount)}
+                        style={{ display: "block", marginTop: 12, marginLeft: "auto", background: "none", border: "none", color: TOKENS.accent, fontFamily: TOKENS.fontDisplay, fontSize: 12, cursor: "pointer" }}
+                      >
+                        다른 조합 보기 ↻
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <p style={{ color: TOKENS.fgMid, fontSize: 12, lineHeight: 1.6, margin: 0 }}>
+                    오늘 기온대에 맞는 옷이 아직 없어요. 옷장에 상의나 하의를 추가해보세요.
+                  </p>
+                )}
+              </section>
             )}
 
             <div>
@@ -2061,7 +2180,7 @@ export default function App() {
             <Eyebrow style={{ color: TOKENS.accent, marginBottom: 10 }}>SIGN OUT</Eyebrow>
             <h2 id="logout-title" style={{ fontFamily: TOKENS.fontDisplay, fontSize: 25, margin: 0, lineHeight: 1.1 }}>정말 로그아웃할까요?</h2>
             <p style={{ color: TOKENS.fgDim, fontSize: 13, lineHeight: 1.6, margin: "12px 0 22px" }}>계정 데이터를 클라우드에 저장한 뒤 로그아웃합니다.</p>
-            {logoutError && <p role="alert" style={{ color: "#ff9b8f", fontSize: 12, lineHeight: 1.6 }}>{logoutError}</p>}
+            {logoutError && <p role="alert" style={{ color: TOKENS.danger, fontSize: 12, lineHeight: 1.6 }}>{logoutError}</p>}
             <div style={{ display: "flex", gap: 8 }}>
               <button onClick={() => setLogoutOpen(false)} disabled={logoutSaving} style={{ flex: 1, background: "none", border: `1px solid ${TOKENS.rule}`, color: TOKENS.fgMid, padding: "12px 0", fontFamily: TOKENS.fontDisplay, fontSize: 13, cursor: logoutSaving ? "wait" : "pointer" }}>취소</button>
               <button onClick={confirmLogout} disabled={logoutSaving} style={{ flex: 1, background: TOKENS.accent, border: `1px solid ${TOKENS.accent}`, color: TOKENS.bg, padding: "12px 0", fontFamily: TOKENS.fontDisplay, fontSize: 13, fontWeight: 700, cursor: logoutSaving ? "wait" : "pointer" }}>{logoutSaving ? "저장 중…" : "로그아웃"}</button>
