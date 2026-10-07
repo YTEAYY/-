@@ -66,8 +66,17 @@ ootd-diary/
 
 ## 로그인 화면
 
-- `App.jsx`의 `AuthPage` 컴포넌트가 로그인/회원가입 화면을 보여줘요.
-- ⚠️ 현재는 **UI만 구현된 상태**예요. 이메일 형식(정규식 검증)과 비밀번호 8자 이상 조건만 통과하면 다음 화면으로 넘어가고, 실제 계정 생성·인증·서버 저장은 하지 않아요. 계정별로 데이터를 구분해서 저장하려면 Firebase Auth나 Supabase 같은 백엔드 연동이 추가로 필요해요.
+- Supabase Auth로 이메일/비밀번호 가입 및 로그인, 이메일 확인, 비밀번호 재설정을 지원해요.
+- 기록·프로필·즐겨찾기·옷장·온도 단위는 로그인한 사용자별로 분리되어 Supabase에 동기화돼요. 첫 로그인 시 서버에 데이터가 없으면 기존 브라우저의 익명 데이터를 해당 계정으로 한 번 이전해요.
+- 클라우드 데이터는 `supabase/schema.sql`의 `user_app_data` 테이블에 저장되며, RLS 정책으로 각 계정은 자신의 데이터에만 접근할 수 있어요. 브라우저에는 공개 anon/publishable 키만 사용하고 service-role 키를 넣지 마세요.
+
+### Supabase 설정
+
+1. Supabase에서 프로젝트를 만든 뒤 **SQL Editor**에서 `supabase/schema.sql` 전체를 실행해요.
+2. Supabase **Authentication → URL Configuration**에서 Site URL을 배포된 앱 주소로 설정하고, Redirect URLs에 배포 주소와 로컬 주소(`http://localhost:5173/**`)를 추가해요.
+3. 로컬 개발은 `.env.example`을 `.env.local`로 복사한 뒤 Supabase Project URL과 anon/publishable key를 각각 `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`에 입력해요. `.env.local`은 저장소에 올리지 마세요.
+4. Vercel의 **Settings → Environment Variables**에도 같은 두 변수를 등록하고 재배포해요. 공개 anon/publishable 키만 사용하며 `service_role` 키는 절대 프론트엔드에 추가하지 마세요.
+5. 처음 로그인할 때 기존 브라우저의 로컬 데이터가 새 계정으로 이전돼요. 다른 계정에 로그인하면 계정별 데이터가 별도로 로드돼요.
 
 ## 디자인
 
