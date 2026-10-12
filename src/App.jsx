@@ -32,6 +32,7 @@ import { CATEGORY_LABEL, CATEGORY_ORDER } from "./lib/wardrobe";
 
 const SEOUL = { lat: 37.5665, lon: 126.978, name: "SEOUL" };
 const SNOW_WEATHER_CODES = new Set([71, 73, 75, 77, 85, 86]);
+const RAIN_WEATHER_CODES = new Set([51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99]);
 
 function bandToWarmth(band) {
   if (band === "boiling" || band === "hot") return "hot";
@@ -484,6 +485,42 @@ function weatherAlerts(weatherCode, temp, feels, humidity, wind, pop) {
   return alerts;
 }
 
+function outingChecklistFor({ weatherCode, temp, feels, pop, wind, aqi, minTemp, maxTemp }) {
+  const items = [];
+  const isSnow = SNOW_WEATHER_CODES.has(weatherCode);
+  const temperatureRange = minTemp != null && maxTemp != null ? maxTemp - minTemp : 0;
+
+  items.push({ id: "outfit", symbol: "◌", label: "날씨에 맞는 옷차림 확인", detail: `현재 체감 ${Math.round(feels)}°` });
+  if (pop >= 40 || RAIN_WEATHER_CODES.has(weatherCode)) {
+    items.push({ id: "umbrella", symbol: "☂", label: "우산 챙기기", detail: `강수 확률 ${pop}%` });
+  }
+  if (isSnow) {
+    items.push({ id: "snow-shoes", symbol: "❄", label: "미끄럼 방지 신발", detail: "눈길·빙판길에 안전한 신발을 준비하세요." });
+  }
+  if (feels <= 15 || temperatureRange >= 8) {
+    items.push({
+      id: "outerwear",
+      symbol: "＋",
+      label: "가벼운 겉옷",
+      detail: temperatureRange >= 8 ? `일교차 ${Math.round(temperatureRange)}° · 벗고 입기 쉬운 겉옷을 챙기세요.` : "쌀쌀한 체감에 대비하세요.",
+    });
+  }
+  if (temp <= 3 || feels <= 0) {
+    items.push({ id: "warm-accessories", symbol: "❄", label: "목도리·장갑", detail: "추위에 노출되는 부위를 따뜻하게 보호하세요." });
+  }
+  if (aqi && (aqi.label === "나쁨" || aqi.label === "매우나쁨")) {
+    items.push({ id: "mask", symbol: "▤", label: "마스크 챙기기", detail: `미세먼지 ${aqi.label} · 외출 시 호흡기를 보호하세요.` });
+  }
+  if (wind >= 10) {
+    items.push({ id: "wind", symbol: "↗", label: "바람에 날리는 물건 확인", detail: "강한 바람에 대비해 모자와 우산을 단단히 챙기세요." });
+  }
+  if (temp >= 28) {
+    items.push({ id: "heat", symbol: "☀", label: "물·햇빛 가리개", detail: "더위와 햇빛에 대비해 물을 마시고 그늘을 이용하세요." });
+  }
+
+  return items;
+}
+
 /* ============================================================
    작은 컴포넌트
    ============================================================ */
@@ -500,7 +537,7 @@ function GlobalStyle() {
       .ootd-scope textarea::placeholder { color: ${TOKENS.fgDim}; }
       @keyframes ootd-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       .ootd-spin { display: inline-block; animation: ootd-spin 1s linear infinite; }
-      .ootd-day-cell:active { background: rgba(240,237,230,0.06); }
+      .ootd-day-cell:active { background: ${TOKENS.accentSoft}; }
     `}</style>
   );
 }
@@ -749,6 +786,7 @@ export default function App() {
     setColorScheme(scheme);
     return scheme;
   });
+  const [checkedOutingItems, setCheckedOutingItems] = useState({});
   const [wardrobeOutfitIndex, setWardrobeOutfitIndex] = useState(0);
   const [wardrobeOpen, setWardrobeOpen] = useState(false);
   const [searchSheetOpen, setSearchSheetOpen] = useState(false);
@@ -1156,6 +1194,38 @@ export default function App() {
   const analysis = analyzeRecords(records);
   const visibleHourRange = showTomorrow ? displayedHourly?.length ?? 0 : hourRange;
   const alerts = weather.status === "ok" ? weatherAlerts(effWeatherCode, effTemp, effFeels, effHumidity, effWind, effPop) : [];
+  const outingChecklist = weather.status === "ok"
+    ? outingChecklistFor({
+        weatherCode: effWeatherCode,
+        temp: effTemp,
+        feels: effFeels,
+        pop: effPop,
+        wind: effWind,
+        aqi: showTomorrow ? null : aqi,
+        minTemp: showTomorrow ? weather.tomorrowMin : weather.todayMin,
+        maxTemp: showTomorrow ? weather.tomorrowMax : weather.todayMax,
+      })
+    : [];
+  const outingChecklistKey = [
+    todayStr,
+    weather.place,
+    showTomorrow,
+    selectedHour,
+    effWeatherCode,
+    Math.round(effTemp),
+    Math.round(effFeels),
+    Math.round(effWind),
+    effPop,
+    weather.todayMin,
+    weather.todayMax,
+    weather.tomorrowMin,
+    weather.tomorrowMax,
+    aqi?.label,
+  ].join(":");
+
+  useEffect(() => {
+    setCheckedOutingItems({});
+  }, [outingChecklistKey]);
 
   if (rec && analysis.ready) {
     if (analysis.coldThreshold != null && effFeels <= analysis.coldThreshold + 2) {
@@ -1549,6 +1619,92 @@ export default function App() {
               </div>
             )}
 
+            {outingChecklist.length > 0 && (
+              <section
+                aria-label="외출 준비 체크리스트"
+                style={{
+                  background: TOKENS.bgRaised,
+                  border: `1px solid ${TOKENS.rule}`,
+                  padding: "14px 12px",
+                  marginTop: 18,
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <div>
+                    <Eyebrow style={{ color: TOKENS.accent, marginBottom: 3 }}>BEFORE YOU GO</Eyebrow>
+                    <div style={{ fontFamily: TOKENS.fontDisplay, fontSize: 19, fontWeight: 700 }}>외출 준비</div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span aria-live="polite" style={{ color: TOKENS.fgDim, fontSize: 11 }}>
+                      {Object.values(checkedOutingItems).filter(Boolean).length}/{outingChecklist.length} 확인
+                    </span>
+                    {Object.values(checkedOutingItems).some(Boolean) && (
+                      <button
+                        type="button"
+                        onClick={() => setCheckedOutingItems({})}
+                        style={{ background: "none", border: "none", color: TOKENS.fgDim, fontSize: 11, cursor: "pointer", padding: 4 }}
+                      >
+                        초기화
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div style={{ display: "grid", gap: 2 }}>
+                  {outingChecklist.map((item) => {
+                    const checked = !!checkedOutingItems[item.id];
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        role="checkbox"
+                        aria-checked={checked}
+                        onClick={() => setCheckedOutingItems((current) => ({ ...current, [item.id]: !current[item.id] }))}
+                        style={{
+                          display: "flex",
+                          alignItems: "flex-start",
+                          gap: 10,
+                          width: "100%",
+                          padding: "9px 2px",
+                          textAlign: "left",
+                          background: "none",
+                          border: "none",
+                          color: checked ? TOKENS.fgDim : TOKENS.fg,
+                          cursor: "pointer",
+                        }}
+                      >
+                        <span
+                          aria-hidden="true"
+                          style={{
+                            display: "grid",
+                            placeItems: "center",
+                            flexShrink: 0,
+                            width: 18,
+                            height: 18,
+                            marginTop: 1,
+                            border: `1px solid ${checked ? TOKENS.accent : TOKENS.rule}`,
+                            background: checked ? TOKENS.accentSoft : "transparent",
+                            color: TOKENS.accent,
+                            fontSize: 12,
+                          }}
+                        >
+                          {checked ? "✓" : ""}
+                        </span>
+                        <span style={{ flex: 1 }}>
+                          <span style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 600, textDecoration: checked ? "line-through" : "none" }}>
+                            <span aria-hidden="true" style={{ color: TOKENS.accent }}>{item.symbol}</span>
+                            {item.label}
+                          </span>
+                          <span style={{ display: "block", marginTop: 3, color: TOKENS.fgDim, fontSize: 11, lineHeight: 1.45 }}>
+                            {item.detail}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+
             {/* ===== Hourly ===== */}
             {displayedHourly && displayedHourly.length > 0 && (
               <div style={{ marginTop: 18 }}>
@@ -1859,7 +2015,7 @@ export default function App() {
           style={{
             width: "100%",
             background: TOKENS.accent,
-            color: "#0c0c0c",
+            color: TOKENS.bg,
             border: "none",
             padding: "16px 0",
             marginTop: 32,
