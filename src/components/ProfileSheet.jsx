@@ -47,7 +47,7 @@ export default function ProfileSheet({ existing, onClose, onSave }) {
 
         <Eyebrow style={{ marginBottom: 8 }}>건강상 주의사항 · 선택</Eyebrow>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 10 }}>
-          {healthOptions.map(([key, label]) => <button key={key} onClick={() => toggleHealth(key)} style={{ textAlign: "left", minHeight: 38, padding: "8px 10px", background: health.includes(key) ? "rgba(212,255,80,0.12)" : "none", color: health.includes(key) ? TOKENS.fg : TOKENS.fgMid, border: `1px solid ${health.includes(key) ? TOKENS.accent : TOKENS.rule}`, fontFamily: TOKENS.fontBody, fontSize: 12, cursor: "pointer" }}>{health.includes(key) ? "✓ " : "□ "}{label}</button>)}
+          {healthOptions.map(([key, label]) => <button key={key} onClick={() => toggleHealth(key)} style={{ textAlign: "left", minHeight: 38, padding: "8px 10px", background: health.includes(key) ? TOKENS.accentSoft : "none", color: health.includes(key) ? TOKENS.fg : TOKENS.fgMid, border: `1px solid ${health.includes(key) ? TOKENS.accent : TOKENS.rule}`, fontFamily: TOKENS.fontBody, fontSize: 12, cursor: "pointer" }}>{health.includes(key) ? "✓ " : "□ "}{label}</button>)}
         </div>
         {health.includes("other") && <input type="text" value={healthOther} onChange={(event) => setHealthOther(event.target.value)} placeholder="예: 무릎 관절이 약해요, 땀이 많은 편이에요" maxLength={60} style={{ width: "100%", background: "none", border: "none", borderBottom: `1px solid ${TOKENS.rule}`, color: TOKENS.fg, padding: "8px 0", fontSize: 13.5, fontFamily: TOKENS.fontBody, marginBottom: 10 }} />}
         <p style={{ margin: "0 0 22px", color: TOKENS.fgDim, fontSize: 11, lineHeight: 1.5 }}>의료 진단이나 치료를 대신하지 않으며, 옷차림과 활동 주의사항 참고로만 사용해요.</p>
