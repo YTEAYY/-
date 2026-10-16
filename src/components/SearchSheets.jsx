@@ -9,7 +9,14 @@ const panelStyle = { background: TOKENS.bgRaised, borderTop: `1px solid ${TOKENS
 export function RecordSearchSheet({ records, onClose, onSelect }) {
   const [query, setQuery] = useState("");
   const normalized = query.trim().toLowerCase();
-  const results = normalized ? Object.entries(records).filter(([, record]) => (record.items_worn || "").toLowerCase().includes(normalized) || (record.user_memo || "").toLowerCase().includes(normalized)).sort((a, b) => (a[0] < b[0] ? 1 : -1)) : [];
+  const results = normalized
+    ? Object.entries(records).filter(([, record]) => {
+        if (!record || typeof record !== "object") return false;
+        const items = typeof record.items_worn === "string" ? record.items_worn : "";
+        const memo = typeof record.user_memo === "string" ? record.user_memo : "";
+        return items.toLowerCase().includes(normalized) || memo.toLowerCase().includes(normalized);
+      }).sort((a, b) => (a[0] < b[0] ? 1 : -1))
+    : [];
   return (
     <div className="ootd-scope" style={sheetStyle} onClick={onClose}>
       <div onClick={(event) => event.stopPropagation()} style={panelStyle}>
@@ -26,13 +33,39 @@ export function LocationSearchSheet({ favorites, onToggleFavorite, onClose, onSe
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState(false);
   const isFavorite = (place) => favorites.some((favorite) => favorite.name === place.name && favorite.latitude === place.latitude && favorite.longitude === place.longitude);
 
   useEffect(() => {
-    if (query.trim().length < 1) { setResults([]); return undefined; }
+    const searchTerm = query.trim();
+    if (!searchTerm) {
+      setResults([]);
+      setSearching(false);
+      setSearchError(false);
+      return undefined;
+    }
+    let active = true;
     setSearching(true);
-    const timer = setTimeout(() => searchCity(query).then((items) => { setResults(items); setSearching(false); }), 350);
-    return () => clearTimeout(timer);
+    setSearchError(false);
+    const timer = setTimeout(() => {
+      searchCity(searchTerm)
+        .then((items) => {
+          if (active) setResults(items);
+        })
+        .catch(() => {
+          if (active) {
+            setResults([]);
+            setSearchError(true);
+          }
+        })
+        .finally(() => {
+          if (active) setSearching(false);
+        });
+    }, 350);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
   }, [query]);
 
   const placeButton = (place) => <button onClick={() => onSelect(place)} style={{ flex: 1, textAlign: "left", background: "none", border: "none", padding: "14px 0", cursor: "pointer", color: TOKENS.fg }}><div style={{ fontSize: 15, fontWeight: 500 }}>{place.name}</div><div style={{ fontFamily: TOKENS.fontDisplay, fontSize: 11.5, color: TOKENS.fgDim, letterSpacing: "0.04em", marginTop: 2 }}>{[place.admin1, place.country].filter(Boolean).join(" · ")}</div></button>;
@@ -45,7 +78,8 @@ export function LocationSearchSheet({ favorites, onToggleFavorite, onClose, onSe
         <input type="text" autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="도시 이름을 입력하세요 (예: 부산, 파리, 도쿄)" style={{ width: "100%", background: "none", border: "none", borderBottom: `1px solid ${TOKENS.rule}`, color: TOKENS.fg, padding: "8px 0", fontSize: 15, fontFamily: TOKENS.fontBody, marginBottom: 18 }} />
         {query.trim().length === 0 && favorites.length > 0 && <><Eyebrow style={{ marginBottom: 6 }}>즐겨찾기</Eyebrow>{favorites.map((favorite, index) => <div key={index} style={{ display: "flex", alignItems: "center", borderTop: `1px solid ${TOKENS.rule}` }}>{placeButton(favorite)}{favoriteButton(favorite)}</div>)}</>}
         {searching && <Eyebrow>검색 중...</Eyebrow>}
-        {!searching && query.trim().length > 0 && results.length === 0 && <Eyebrow>검색 결과가 없어요</Eyebrow>}
+        {!searching && searchError && <Eyebrow>지역 검색에 실패했어요. 잠시 후 다시 시도해주세요.</Eyebrow>}
+        {!searching && !searchError && query.trim().length > 0 && results.length === 0 && <Eyebrow>검색 결과가 없어요</Eyebrow>}
         {results.map((place, index) => <div key={index} style={{ display: "flex", alignItems: "center", borderTop: `1px solid ${TOKENS.rule}` }}>{placeButton(place)}{favoriteButton(place)}</div>)}
       </div>
     </div>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { dateInTimezone, fmtDate, fmtTemp, pad, seasonFor } from "./lib/date";
+import { dateInTimezone, fmtDate, fmtTemp, pad } from "./lib/date";
  
 import {
   loadFavorites,
@@ -23,50 +23,27 @@ import { loadCloudData, normalizeAppData, saveCloudData } from "./lib/cloudData"
 import { supabase, supabaseConfigured } from "./lib/supabase";
 import { useWeather } from "./hooks/useWeather";
 import { TOKENS, setColorScheme } from "./constants";
+import {
+  aqiInfo,
+  bandToWarmth,
+  MIN_RECORDS_FOR_ANALYSIS,
+  outfitFor,
+  outingChecklistFor,
+  seasonalHeadline,
+  SNOW_WEATHER_CODES,
+  weatherAlerts,
+  weatherSymbol,
+  wardrobeOutfitFor,
+} from "./lib/recommendation";
+import { analyzeRecords } from "./lib/recordAnalysis";
 import { Eyebrow, FeelingMark, SectionToggle } from "./components/common";
 import ProfileSheetComponent from "./components/ProfileSheet";
 import { LocationSearchSheet as LocationSearchSheetComponent, RecordSearchSheet as RecordSearchSheetComponent } from "./components/SearchSheets";
 import WardrobeSheetComponent from "./components/WardrobeSheet";
 import RecordSheetComponent from "./components/RecordSheet";
-import { CATEGORY_LABEL, CATEGORY_ORDER } from "./lib/wardrobe";
+import { CATEGORY_LABEL } from "./lib/wardrobe";
 
 const SEOUL = { lat: 37.5665, lon: 126.978, name: "SEOUL" };
-const SNOW_WEATHER_CODES = new Set([71, 73, 75, 77, 85, 86]);
-const RAIN_WEATHER_CODES = new Set([51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99]);
-
-function bandToWarmth(band) {
-  if (band === "boiling" || band === "hot") return "hot";
-  if (band === "cool" || band === "cold") return "cold";
-  return "mild";
-}
-
-function wardrobeOutfitFor(wardrobe, band, rotation = 0, weatherCode = null) {
-  const wantedWarmth = bandToWarmth(band);
-  const warmthOptions = {
-    hot: ["hot", "mild"],
-    mild: ["mild", "cold", "hot"],
-    cold: ["cold", "mild"],
-  }[wantedWarmth] || [wantedWarmth];
-  const unsafeShoes = SNOW_WEATHER_CODES.has(weatherCode) || [95, 96, 99].includes(weatherCode);
-
-  let combinationOffset = 1;
-  const entries = CATEGORY_ORDER
-    .filter((category) => !(category === "shoes" && unsafeShoes))
-    .map((category) => {
-      const choices = wardrobe.filter((item) => item.category === category && warmthOptions.includes(item.warmth));
-      if (!choices.length) return null;
-      const choiceIndex = Math.floor(rotation / combinationOffset) % choices.length;
-      combinationOffset *= choices.length;
-      return {
-        category,
-        item: choices[choiceIndex],
-        choiceCount: choices.length,
-      };
-    })
-    .filter(Boolean);
-  const combinationCount = entries.reduce((total, entry) => total * entry.choiceCount, 1);
-  return { entries, combinationCount, unsafeShoes };
-}
 
 const WEEK_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
 
@@ -93,334 +70,18 @@ function holidayName(dateStr, dynamicMap) {
   return dynamicMap?.[dateStr] || null;
 }
 
-const BAND_META = {
-  boiling: { eng: "SCORCHING", headline: "찜통 더위, 최대한 가볍게", desc: "가볍게 입어야 하는 무더운 하루" },
-  hot: { eng: "WARM", headline: "여름 옷차림이면 충분해요", desc: "화창하고 더운 하루" },
-  warm: { eng: "MILD", headline: "활동하기 좋은 선선한 날씨", desc: "가볍게 걸치기 좋은 하루" },
-  mild: { eng: "BRISK", headline: "쌀쌀하니 한 겹 더 챙기세요", desc: "겉옷 하나면 딱 좋은 하루" },
-  cool: { eng: "COLD", headline: "쌀쌀해요, 아우터는 필수", desc: "아우터 없이는 쌀쌀한 하루" },
-  cold: { eng: "FREEZING", headline: "춥습니다, 든든하게 챙기세요", desc: "든든히 챙겨입어야 하는 추운 하루" },
-};
 
-const SEASON_META = {
-  spring: { label: "봄", message: "봄 옷차림이면 충분해요" },
-  summer: { label: "여름", message: "여름 옷차림이면 충분해요" },
-  autumn: { label: "가을", message: "가벼운 가을 옷차림을 준비해요" },
-  winter: { label: "겨울", message: "따뜻한 겨울 옷차림을 챙겨요" },
-};
-
-function seasonalHeadline(band, date = new Date()) {
-  const season = seasonFor(date);
-  if (band === "hot" || band === "boiling") return SEASON_META[season].message;
-  return BAND_META[band].headline;
-}
-
-const OUTFIT_BASE = {
-  boiling: { top: "린넨/메시 반팔티", bottom: "린넨 반바지 또는 얇은 슬랙스", outer: "겉옷 없이", shoes: "통풍 잘 되는 스니커즈 또는 샌들", acc: "선글라스, 미니 크로스백" },
-  hot: { top: "반팔 티셔츠", bottom: "면 반바지 또는 얇은 데님", outer: "겉옷 없이 (실내 냉방 대비용 얇은 셔츠 하나)", shoes: "캔버스 스니커즈", acc: "캡모자" },
-  warm: { top: "얇은 셔츠 또는 반팔 맨투맨", bottom: "치노팬츠 또는 데님", outer: "가벼운 가디건", shoes: "스니커즈", acc: "선택 사항" },
-  mild: { top: "긴팔 티 또는 맨투맨", bottom: "청바지", outer: "후드집업 또는 가벼운 자켓", shoes: "스니커즈 또는 로퍼", acc: "선택 사항" },
-  cool: { top: "니트 또는 기모 맨투맨", bottom: "기모 청바지", outer: "코트 또는 무스탕", shoes: "부츠 또는 두꺼운 스니커즈", acc: "얇은 목도리" },
-  cold: { top: "히트텍 + 니트", bottom: "기모 팬츠", outer: "롱패딩 또는 두꺼운 코트", shoes: "부츠", acc: "목도리, 장갑, 비니" },
-};
-
-function wardrobeMatchFor(category, wantedWarmth, wardrobe) {
-  const exact = wardrobe.filter((item) => item.category === category && item.warmth === wantedWarmth);
-  if (exact.length > 0) {
-    return exact.sort((a, b) => a.name.localeCompare(b.name, "ko", { sensitivity: "base" }))[0].name;
-  }
-
-  const fallbackWarmth = {
-    hot: ["hot", "mild"],
-    mild: ["mild", "cold", "hot"],
-    cold: ["cold", "mild"],
-  }[wantedWarmth] || [wantedWarmth];
-
-  for (const warmth of fallbackWarmth) {
-    const candidates = wardrobe.filter((item) => item.category === category && item.warmth === warmth);
-    if (candidates.length > 0) {
-      return candidates.sort((a, b) => a.name.localeCompare(b.name, "ko", { sensitivity: "base" }))[0].name;
-    }
-  }
-
-  return null;
-}
-
-function outfitFor(temp, feels, pop, humidity, wind, profile = {}, aqi = null, weatherCode = null, wardrobe = []) {
-  let band;
-  if (feels >= 29) band = "boiling";
-  else if (feels >= 24) band = "hot";
-  else if (feels >= 18) band = "warm";
-  else if (feels >= 12) band = "mild";
-  else if (feels >= 5) band = "cool";
-  else band = "cold";
-
-  const outfit = { ...OUTFIT_BASE[band] };
-  if (Array.isArray(wardrobe) && wardrobe.length > 0) {
-    CATEGORY_ORDER.forEach((cat) => {
-      const selectedItem = wardrobeMatchFor(cat, bandToWarmth(band), wardrobe);
-      if (selectedItem) outfit[cat] = selectedItem;
-    });
-  }
-
-  const tips = [];
-  const flags = {};
-  const profileNotes = [];
-  const isThunder = [95, 96, 99].includes(weatherCode);
-  const isSnow = SNOW_WEATHER_CODES.has(weatherCode);
-
-  if (isThunder) {
-    outfit.shoes = "방수 스니커즈 또는 워커 (가죽 신발 비추천)";
-    outfit.acc = "우비 (금속 우산은 피하세요)";
-    flags.shoes = "MUST";
-    flags.acc = "MUST";
-    tips.push("천둥번개가 예상돼요. 금속 우산보다 우비가 안전하고, 가능하면 야외 활동은 피하세요.");
-  } else if (isSnow) {
-    outfit.shoes = "미끄럼 방지 방한 부츠";
-    outfit.acc = "방한 장갑";
-    flags.shoes = "MUST";
-    flags.acc = "MUST";
-    tips.push("눈이 와요. 미끄럼 방지 신발을 신고 빙판길에서는 천천히 걸어주세요.");
-  } else if (pop >= 50) {
-    outfit.shoes = "방수 스니커즈 또는 워커 (가죽 신발 비추천)";
-    flags.shoes = "MUST";
-    tips.push("비 소식이 있어요. 우산은 필수, 밑단 짧은 하의가 편해요.");
-  } else if (pop >= 30) {
-    tips.push("비가 살짝 올 수 있어요. 우산을 챙겨두면 안심이에요.");
-  }
-
-  if (band === "cool" || band === "cold") flags.outer = "MUST";
-  if (band === "boiling" || band === "cold") flags.acc = "MUST";
-
-  if (wind >= 8) {
-    if (band === "hot" || band === "warm" || band === "boiling") {
-      tips.push("바람이 꽤 강해요. 얇은 바람막이 하나 챙기면 좋아요.");
-    } else {
-      outfit.outer += " (여밀 수 있는 걸로)";
-      flags.outer = "MUST";
-      tips.push("바람이 강한 날이에요. 여밀 수 있는 아우터가 체감온도를 확 낮춰줘요.");
-    }
-  }
-
-  if (humidity >= 75 && (band === "hot" || band === "boiling")) {
-    tips.push("습도가 높아 더 후덥지근해요. 통풍 잘 되는 린넨·메시 소재가 훨씬 쾌적해요.");
-  } else if (humidity <= 30 && band !== "hot" && band !== "boiling") {
-    tips.push("공기가 건조해요. 립밤이나 핸드크림을 챙기면 좋아요.");
-  }
-
-  const age = Number(profile.age);
-  const health = profile.health || [];
-  if (age > 0 && (age <= 12 || age >= 65)) {
-    if (band === "boiling" || band === "hot") {
-      tips.push("기온에 민감할 수 있는 연령대예요. 한낮 야외 활동은 줄이고 물을 자주 마셔요.");
-      profileNotes.push("나이");
-    }
-    if (band === "cool" || band === "cold") {
-      outfit.outer = outfit.outer === "겉옷 없이" ? "가벼운 보온 겉옷" : `${outfit.outer} (보온성 우선)`;
-      flags.outer = "MUST";
-      tips.push("추위에 민감할 수 있는 연령대라 목과 손을 따뜻하게 보호하면 좋아요.");
-      profileNotes.push("나이");
-    }
-  }
-  // 호흡기 민감: 춥거나 바람이 강할 때뿐 아니라, 오늘 미세먼지가 나쁜 날에도 반영
-  const badAir = aqi && (aqi.label === "나쁨" || aqi.label === "매우나쁨");
-  if (health.includes("respiratory") && (band === "cool" || band === "cold" || wind >= 8)) {
-    outfit.acc = "마스크 또는 목을 덮는 스카프";
-    flags.acc = "MUST";
-    tips.push("호흡기가 예민하다면 차갑고 강한 바람을 직접 맞지 않도록 목과 코를 가려주세요.");
-    profileNotes.push("호흡기 민감");
-  }
-  if (health.includes("respiratory") && badAir) {
-    outfit.acc = "마스크 (미세먼지 " + aqi.label + ")";
-    flags.acc = "MUST";
-    tips.push(`오늘 미세먼지가 ${aqi.label} 수준이에요. 호흡기가 예민하다면 마스크를 꼭 착용하세요.`);
-    if (!profileNotes.includes("호흡기 민감")) profileNotes.push("호흡기 민감");
-  }
-  if (health.includes("cardiovascular") && (band === "boiling" || band === "hot" || band === "cold")) {
-    tips.push("기온 변화에 주의가 필요한 상태라 무리한 야외 활동을 피하고 체온을 천천히 조절하세요.");
-    profileNotes.push("심혈관 주의");
-  }
-  if (health.includes("skin")) {
-    outfit.acc = band === "boiling" || band === "hot" ? "자외선 차단제, 통풍 좋은 모자" : outfit.acc;
-    tips.push("피부가 예민하다면 까슬한 소재보다 부드럽고 통풍되는 소재를 골라보세요.");
-    profileNotes.push("피부 민감");
-  }
-  if (health.includes("coldSensitive") && (band === "warm" || band === "mild" || band === "cool" || band === "cold")) {
-    if (band !== "warm") {
-      outfit.outer = outfit.outer === "겉옷 없이" ? "가벼운 보온 겉옷" : `${outfit.outer} (보온성 우선)`;
-      flags.outer = "MUST";
-    }
-    tips.push("추위를 많이 타는 편이면 체감온도보다 한 겹 더 챙기는 게 좋아요.");
-    profileNotes.push("추위 민감");
-  }
-  if (health.includes("pregnant")) {
-    if (band === "boiling" || band === "hot") {
-      tips.push("임신 중에는 체온이 더 쉽게 오를 수 있어요. 통풍 잘 되는 넉넉한 옷을 고르고 무리한 야외 활동은 피하세요.");
-    }
-    if (band === "cool" || band === "cold") {
-      outfit.outer = outfit.outer === "겉옷 없이" ? "가벼운 보온 겉옷" : `${outfit.outer} (보온성 우선)`;
-      flags.outer = "MUST";
-      tips.push("배를 따뜻하게 유지하고, 미끄러운 신발보다 안정감 있는 신발을 고르세요.");
-    }
-    profileNotes.push("임신 중");
-  }
-  if (health.includes("other") && profile.healthOther?.trim()) {
-    tips.push(`직접 입력하신 건강 상태(${profile.healthOther.trim()})도 함께 고려해서 오늘 옷차림과 활동을 조절해보세요.`);
-    profileNotes.push("기타");
-  }
-
-  const items = CATEGORY_ORDER.filter((cat) => outfit[cat] && outfit[cat] !== "겉옷 없이").map((cat) => ({
-    cat,
-    label: CATEGORY_LABEL[cat],
-    item: outfit[cat],
-    flag: flags[cat],
-  }));
-
-  return { band, ...BAND_META[band], outfit, items, tips, profileNotes: [...new Set(profileNotes)] };
-}
-
-// 오늘의 코디 카드를 공유 가능한 텍스트로 만든다.
-function outfitShareText(rec, weather, place) {
-  const lines = [
-    `오늘 뭐 입지? · ${place}`,
-    `${Math.round(weather.temp)}° (체감 ${Math.round(weather.feels)}°) · ${rec.headline}`,
-    "",
-    ...rec.items.map((item) => `${item.label}: ${item.item}`),
-  ];
-  return lines.join("\n");
-}
-
-async function shareOutfit(rec, weather, place, onFallback) {
-  const text = outfitShareText(rec, weather, place);
-  if (navigator.share) {
-    try {
-      await navigator.share({ title: "오늘 뭐 입지?", text });
-      return;
-    } catch (e) {
-      // 사용자가 공유를 취소한 경우 등은 무시
-      return;
-    }
-  }
-  try {
-    await navigator.clipboard.writeText(text);
-    onFallback?.("클립보드에 복사됐어요");
-  } catch (e) {
-    onFallback?.("공유를 지원하지 않는 브라우저예요");
-  }
-}
-
-const MIN_RECORDS_FOR_ANALYSIS = 1;
-const MEMO_KEYWORDS = [
-  { word: "에어컨", tip: "실내 에어컨 때문에 춥다고 적으신 적이 있어요. 얇은 가디건을 상시 챙겨보면 좋아요." },
-  { word: "히터", tip: "히터 때문에 덥다고 적으신 적이 있어요. 실내에서 바로 벗을 수 있는 레이어드가 편해요." },
-  { word: "바람", tip: "바람 때문에 불편했다는 기록이 있어요. 바람막이를 챙기는 습관을 들이면 좋아요." },
-  { word: "땀", tip: "땀 관련 기록이 있어요. 통풍 잘 되는 소재를 우선 고려해보세요." },
-];
-
-function analyzeRecords(records) {
-  const entries = Object.entries(records).filter(([, r]) => r.feeling);
-  const count = entries.length;
-  if (count < MIN_RECORDS_FOR_ANALYSIS) return { count, ready: false };
-
-  const byFeeling = { hot: [], normal: [], cold: [] };
-  const feelingCounts = { hot: 0, normal: 0, cold: 0 };
-  entries.forEach(([, r]) => {
-    feelingCounts[r.feeling] += 1;
-    if (typeof r.temperature === "number") byFeeling[r.feeling]?.push(r.temperature);
-  });
-
-  const avg = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
-  const avgHot = avg(byFeeling.hot);
-  const avgNormal = avg(byFeeling.normal);
-  const avgCold = avg(byFeeling.cold);
-  const counts = feelingCounts;
-
-  const tips = [];
-  let coldThreshold = null;
-  let hotThreshold = null;
-
-  if (avgCold != null && avgNormal != null) {
-    coldThreshold = (avgCold + avgNormal) / 2;
-    if (coldThreshold > 15) {
-      tips.push(`${Math.round(coldThreshold)}° 근처에서도 춥다고 느끼신 기록이 있어요. 애매한 날씨엔 겉옷을 한 겹 더 챙기는 게 좋아요.`);
-    } else if (coldThreshold < 8) {
-      tips.push(`추위를 잘 안 타는 편이에요. ${Math.round(coldThreshold)}° 정도는 돼야 춥다고 느끼셨어요.`);
-    }
-  }
-  if (avgHot != null && avgNormal != null) {
-    hotThreshold = (avgHot + avgNormal) / 2;
-    if (hotThreshold < 22) {
-      tips.push(`${Math.round(hotThreshold)}° 정도만 돼도 덥다고 느끼시는 편이에요. 통풍 잘 되는 소재를 우선하면 좋아요.`);
-    }
-  }
-
-  const memoText = entries.map(([, r]) => r.user_memo || "").join(" ");
-  MEMO_KEYWORDS.forEach(({ word, tip }) => {
-    const occurrences = memoText.split(word).length - 1;
-    if (occurrences >= 2) tips.push(tip);
-  });
-
-  if (tips.length === 0) tips.push("아직 뚜렷한 패턴은 안 보여요. 기록이 더 쌓이면 분석이 정확해져요.");
-
-  // 자주 입은 아이템 Top 5 (쉼표로 구분된 텍스트를 단순 집계)
-  const itemFreq = {};
-  entries.forEach(([, r]) => {
-    (r.items_worn || "")
-      .split(/[,、·\n]/)
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .forEach((item) => {
-        itemFreq[item] = (itemFreq[item] || 0) + 1;
-      });
-  });
-  const topItems = Object.entries(itemFreq)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([name, n]) => ({ name, count: n }));
-
-  // 월별 기록 수 / 체감 분포 (최근 6개월)
-  const monthMap = {};
-  entries.forEach(([date, r]) => {
-    const ym = date.slice(0, 7);
-    if (!monthMap[ym]) monthMap[ym] = { hot: 0, normal: 0, cold: 0, total: 0 };
-    monthMap[ym][r.feeling] += 1;
-    monthMap[ym].total += 1;
-  });
-  const monthly = Object.entries(monthMap)
-    .sort((a, b) => (a[0] < b[0] ? -1 : 1))
-    .slice(-6)
-    .map(([ym, v]) => ({ ym, ...v }));
-
-  return { count, ready: true, avgHot, avgNormal, avgCold, counts, coldThreshold, hotThreshold, tips: tips.slice(0, 3), topItems, monthly };
-}
-
-function aqiInfo(pm10, pm25) {
-  const grade = (val, breaks) => {
-    if (val == null || Number.isNaN(val)) return null;
-    if (val <= breaks[0]) return 0;
-    if (val <= breaks[1]) return 1;
-    if (val <= breaks[2]) return 2;
-    return 3;
-  };
-  const g10 = grade(pm10, [30, 80, 150]);
-  const g25 = grade(pm25, [15, 35, 75]);
-  const candidates = [g10, g25].filter((g) => g !== null);
-  if (candidates.length === 0) return null;
-  const g = Math.max(...candidates);
-  const labels = ["좋음", "보통", "나쁨", "매우나쁨"];
-  const colors = [TOKENS.accent, TOKENS.fgMid, "#e2984c", "#e0524c"];
-  return { label: labels[g], color: colors[g] };
-}
-
-// 기록 + 프로필 + 즐겨찾기를 하나의 JSON 파일로 내보낸다.
-function exportBackup(records, profile, favorites) {
+function exportBackup(records, profile, favorites, wardrobe, unit, colorScheme) {
   const payload = {
     exportedAt: new Date().toISOString(),
     app: "ootd-weather-diary",
-    version: 1,
+    version: 2,
     records,
     profile,
     favorites,
+    wardrobe,
+    unit,
+    colorScheme,
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -440,7 +101,14 @@ function parseBackupFile(file) {
     reader.onload = () => {
       try {
         const data = JSON.parse(reader.result);
-        if (data && typeof data === "object" && data.records) {
+        if (
+          data
+          && typeof data === "object"
+          && !Array.isArray(data)
+          && data.records
+          && typeof data.records === "object"
+          && !Array.isArray(data.records)
+        ) {
           resolve(data);
         } else {
           resolve(null);
@@ -455,75 +123,7 @@ function parseBackupFile(file) {
 }
 
 // 현재 날씨와 시간에 맞는 회색 픽토그램을 표시한다.
-function weatherSymbol(weatherCode, pop, hour) {
-  const isSnow = SNOW_WEATHER_CODES.has(weatherCode);
-  const isThunder = [95, 96, 99].includes(weatherCode);
-  const isRain = [51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82].includes(weatherCode);
-  const isEvening = hour >= 19 || hour < 6;
 
-  if (isSnow) return "❄";
-  if (isThunder) return "ϟ";
-  if (isRain || pop >= 45) return "☂";
-  if (isEvening) return "☾";
-  return "☀";
-}
-
-function weatherAlerts(weatherCode, temp, feels, humidity, wind, pop) {
-  const alerts = [];
-  const isHeavyRain = [65, 82].includes(weatherCode);
-  const isStorm = [95, 96, 99].includes(weatherCode);
-  const isSnow = [71, 73, 75, 77, 85, 86].includes(weatherCode);
-
-  if (isStorm || wind >= 17.2) alerts.push({ symbol: "⚠", label: "강풍 주의" });
-  if (isHeavyRain) alerts.push({ symbol: "╱╱", label: "폭우 주의" });
-  if (isStorm) alerts.push({ symbol: "ϟ", label: "폭풍우 주의" });
-  if (isSnow) alerts.push({ symbol: "❄", label: "눈길 미끄럼 주의" });
-  if (temp <= -10 || feels <= -15) alerts.push({ symbol: "❄", label: "한파 주의" });
-  if (temp >= 33 || feels >= 35) alerts.push({ symbol: "☀", label: "폭염 주의" });
-  if (humidity <= 30 && pop < 20) alerts.push({ symbol: "◌", label: "건조 주의" });
-
-  return alerts;
-}
-
-function outingChecklistFor({ weatherCode, temp, feels, pop, wind, aqi, minTemp, maxTemp }) {
-  const items = [];
-  const isSnow = SNOW_WEATHER_CODES.has(weatherCode);
-  const temperatureRange = minTemp != null && maxTemp != null ? maxTemp - minTemp : 0;
-
-  items.push({ id: "outfit", symbol: "◌", label: "날씨에 맞는 옷차림 확인", detail: `현재 체감 ${Math.round(feels)}°` });
-  if (pop >= 40 || RAIN_WEATHER_CODES.has(weatherCode)) {
-    items.push({ id: "umbrella", symbol: "☂", label: "우산 챙기기", detail: `강수 확률 ${pop}%` });
-  }
-  if (isSnow) {
-    items.push({ id: "snow-shoes", symbol: "❄", label: "미끄럼 방지 신발", detail: "눈길·빙판길에 안전한 신발을 준비하세요." });
-  }
-  if (feels <= 15 || temperatureRange >= 8) {
-    items.push({
-      id: "outerwear",
-      symbol: "＋",
-      label: "가벼운 겉옷",
-      detail: temperatureRange >= 8 ? `일교차 ${Math.round(temperatureRange)}° · 벗고 입기 쉬운 겉옷을 챙기세요.` : "쌀쌀한 체감에 대비하세요.",
-    });
-  }
-  if (temp <= 3 || feels <= 0) {
-    items.push({ id: "warm-accessories", symbol: "❄", label: "목도리·장갑", detail: "추위에 노출되는 부위를 따뜻하게 보호하세요." });
-  }
-  if (aqi && (aqi.label === "나쁨" || aqi.label === "매우나쁨")) {
-    items.push({ id: "mask", symbol: "▤", label: "마스크 챙기기", detail: `미세먼지 ${aqi.label} · 외출 시 호흡기를 보호하세요.` });
-  }
-  if (wind >= 10) {
-    items.push({ id: "wind", symbol: "↗", label: "바람에 날리는 물건 확인", detail: "강한 바람에 대비해 모자와 우산을 단단히 챙기세요." });
-  }
-  if (temp >= 28) {
-    items.push({ id: "heat", symbol: "☀", label: "물·햇빛 가리개", detail: "더위와 햇빛에 대비해 물을 마시고 그늘을 이용하세요." });
-  }
-
-  return items;
-}
-
-/* ============================================================
-   작은 컴포넌트
-   ============================================================ */
 function GlobalStyle() {
   return (
     <style>{`
@@ -781,11 +381,11 @@ export default function App() {
   const [favorites, setFavorites] = useState(() => loadFavorites());
   const [wardrobe, setWardrobe] = useState(() => loadWardrobe());
   const [unit, setUnit] = useState(() => loadUnit());
-  const [colorScheme, setColorSchemeState] = useState(() => {
-    const scheme = loadColorScheme();
-    setColorScheme(scheme);
-    return scheme;
-  });
+  const [colorScheme, setColorSchemeState] = useState(() => loadColorScheme());
+  useEffect(() => {
+    setColorScheme(colorScheme);
+    saveColorScheme(colorScheme);
+  }, [colorScheme]);
   const [checkedOutingItems, setCheckedOutingItems] = useState({});
   const [wardrobeOutfitIndex, setWardrobeOutfitIndex] = useState(0);
   const [wardrobeOpen, setWardrobeOpen] = useState(false);
@@ -859,7 +459,6 @@ export default function App() {
       setWardrobe(appData.wardrobe);
       setUnit(appData.unit);
       setColorSchemeState(appData.colorScheme);
-      setColorScheme(appData.colorScheme);
       dataReadyRef.current = true;
       setIsDataReady(true);
       setDataSyncStatus("synced");
@@ -893,7 +492,6 @@ export default function App() {
     setUnit("C");
     const guestColorScheme = loadColorScheme();
     setColorSchemeState(guestColorScheme);
-    setColorScheme(guestColorScheme);
   }, []);
 
   useEffect(() => {
@@ -1007,45 +605,40 @@ export default function App() {
   }
 
   function toggleFavorite(place) {
-    setFavorites((prev) => {
-      const exists = prev.some((f) => f.name === place.name && f.latitude === place.latitude && f.longitude === place.longitude);
-      const next = exists
-        ? prev.filter((f) => !(f.name === place.name && f.latitude === place.latitude && f.longitude === place.longitude))
-        : [...prev, { name: place.name, latitude: place.latitude, longitude: place.longitude, admin1: place.admin1, country: place.country }];
-      saveFavorites(next);
-      return next;
-    });
+    const exists = favorites.some((favorite) => (
+      favorite.name === place.name
+      && favorite.latitude === place.latitude
+      && favorite.longitude === place.longitude
+    ));
+    const next = exists
+      ? favorites.filter((favorite) => !(
+          favorite.name === place.name
+          && favorite.latitude === place.latitude
+          && favorite.longitude === place.longitude
+        ))
+      : [...favorites, { name: place.name, latitude: place.latitude, longitude: place.longitude, admin1: place.admin1, country: place.country }];
+    setFavorites(next);
+    saveFavorites(next);
   }
 
   function addWardrobeItem(item) {
-    setWardrobe((prev) => {
-      const next = [...prev, { id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, ...item }];
-      saveWardrobe(next);
-      return next;
-    });
+    const next = [...wardrobe, { id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, ...item }];
+    setWardrobe(next);
+    saveWardrobe(next);
   }
   function removeWardrobeItem(id) {
-    setWardrobe((prev) => {
-      const next = prev.filter((w) => w.id !== id);
-      saveWardrobe(next);
-      return next;
-    });
+    const next = wardrobe.filter((item) => item.id !== id);
+    setWardrobe(next);
+    saveWardrobe(next);
   }
   function toggleUnit() {
-    setUnit((prev) => {
-      const next = prev === "C" ? "F" : "C";
-      saveUnit(next);
-      return next;
-    });
+    const next = unit === "C" ? "F" : "C";
+    setUnit(next);
+    saveUnit(next);
   }
 
   function toggleColorScheme() {
-    setColorSchemeState((current) => {
-      const next = current === "dark" ? "light" : "dark";
-      setColorScheme(next);
-      saveColorScheme(next);
-      return next;
-    });
+    setColorSchemeState((current) => (current === "dark" ? "light" : "dark"));
   }
 
   function logout() {
@@ -1086,7 +679,7 @@ export default function App() {
         setImportMsg("파일을 읽을 수 없어요. 이 앱에서 내보낸 백업 파일인지 확인해주세요.");
         return;
       }
-      const mergedRecords = { ...records, ...(data.records || {}) };
+      const mergedRecords = { ...records, ...data.records };
       persist(mergedRecords);
       if (data.profile) {
         setProfile(data.profile);
@@ -1096,7 +689,25 @@ export default function App() {
         setFavorites(data.favorites);
         saveFavorites(data.favorites);
       }
+      if (Array.isArray(data.wardrobe)) {
+        const currentById = new Map(wardrobe.map((item) => [item.id, item]));
+        data.wardrobe.forEach((item) => {
+          if (item && typeof item.id === "string") currentById.set(item.id, item);
+        });
+        const mergedWardrobe = [...currentById.values()];
+        setWardrobe(mergedWardrobe);
+        saveWardrobe(mergedWardrobe);
+      }
+      if (data.unit === "C" || data.unit === "F") {
+        setUnit(data.unit);
+        saveUnit(data.unit);
+      }
+      if (data.colorScheme === "dark" || data.colorScheme === "light") {
+        setColorSchemeState(data.colorScheme);
+      }
       setImportMsg(`불러오기 완료 (기록 ${Object.keys(data.records || {}).length}일치 반영)`);
+    }).catch((error) => {
+      setImportMsg(`백업을 불러오지 못했어요. (${error?.message || "파일을 확인해주세요."})`);
     });
   }
 
@@ -1167,7 +778,16 @@ export default function App() {
   const effWind = effectiveHour?.wind ?? weather.wind;
   const effWeatherCode = effectiveHour?.weatherCode ?? weather.weatherCode;
   const localRec = weather.status === "ok"
-    ? outfitFor(effTemp, effFeels, effPop, effHumidity, effWind, profile, aqi, effWeatherCode, wardrobe)
+    ? outfitFor({
+        feels: effFeels,
+        pop: effPop,
+        humidity: effHumidity,
+        wind: effWind,
+        profile,
+        aqi,
+        weatherCode: effWeatherCode,
+        wardrobe,
+      })
     : null;
   // AI(Gemini)가 응답을 준 경우 items/tips만 AI 결과로 교체하고, band/eng/desc 등은 그대로 로컬 계산을 사용한다.
   // AI 호출이 아직 안 끝났거나 실패하면 자연스럽게 로컬 규칙 기반 추천이 그대로 보인다.
@@ -1279,7 +899,6 @@ export default function App() {
         setAiRec(null);
         setAiStatus("error");
       });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     weather.status,
     effTemp,
@@ -1290,8 +909,8 @@ export default function App() {
     effWeatherCode,
     localRec?.band,
     aqi?.label,
-    JSON.stringify(profile),
-    JSON.stringify(wardrobe),
+    profile,
+    wardrobe,
   ]);
 
   let rainAlert = null;
@@ -2217,11 +1836,11 @@ export default function App() {
         {backupOpen && (
           <div style={{ padding: "18px 0" }}>
             <p style={{ fontSize: 12.5, color: TOKENS.fgDim, lineHeight: 1.6, marginTop: 0, marginBottom: 16 }}>
-              기록은 이 브라우저 안에만 저장돼요. 기기를 바꾸거나 브라우저 데이터를 지우면 사라지니, 가끔 백업해두는 걸 추천해요.
+              기록, 프로필, 옷장, 단위와 테마를 백업 파일로 저장해요. 로그인 계정은 클라우드에 동기화되지만, 기기 변경 등에 대비해 백업 파일을 따로 보관할 수 있어요.
             </p>
             <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
               <button
-                onClick={() => exportBackup(records, profile, favorites)}
+                onClick={() => exportBackup(records, profile, favorites, wardrobe, unit, colorScheme)}
                 style={{
                   flex: 1,
                   background: "none",

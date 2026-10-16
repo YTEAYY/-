@@ -1,15 +1,11 @@
 export async function searchCity(query) {
   if (!query || query.trim().length < 1) return [];
-  try {
-    const response = await fetch(
-      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query.trim())}&count=8&language=ko&format=json`
-    );
-    if (!response.ok) return [];
-    const data = await response.json();
-    return data.results || [];
-  } catch (error) {
-    return [];
-  }
+  const response = await fetch(
+    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query.trim())}&count=8&language=ko&format=json`
+  );
+  if (!response.ok) throw new Error(`지역 검색 요청 실패 (${response.status})`);
+  const data = await response.json();
+  return Array.isArray(data.results) ? data.results : [];
 }
 
 export async function reverseGeocode(latitude, longitude) {
