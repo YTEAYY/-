@@ -70,6 +70,34 @@ function holidayName(dateStr, dynamicMap) {
   return dynamicMap?.[dateStr] || null;
 }
 
+function outfitShareText(rec, weather, place) {
+  const lines = [
+    `오늘 뭐 입지? · ${place}`,
+    `${Math.round(weather.temp)}° (체감 ${Math.round(weather.feels)}°) · ${rec.headline}`,
+    "",
+    ...rec.items.map((item) => `${item.label}: ${item.item}`),
+  ];
+  return lines.join("\n");
+}
+
+async function shareOutfit(rec, weather, place, onFallback) {
+  const text = outfitShareText(rec, weather, place);
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: "오늘 뭐 입지?", text });
+      return;
+    } catch (error) {
+      if (error?.name === "AbortError") return;
+      throw error;
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    onFallback?.("클립보드에 복사됐어요");
+  } catch (error) {
+    onFallback?.(`공유하지 못했어요. (${error?.message || "이 브라우저는 공유를 지원하지 않아요."})`);
+  }
+}
 
 function exportBackup(records, profile, favorites, wardrobe, unit, colorScheme) {
   const payload = {
@@ -1606,7 +1634,9 @@ export default function App() {
             <button
               onClick={() => {
                 setShareMsg("");
-                shareOutfit(rec, weather, weather.place, setShareMsg);
+                shareOutfit(rec, weather, weather.place, setShareMsg).catch((error) => {
+                  setShareMsg(`공유에 실패했어요. (${error?.message || "다시 시도해주세요."})`);
+                });
               }}
               style={{
                 marginTop: 20,
