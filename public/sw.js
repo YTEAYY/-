@@ -1,5 +1,7 @@
-const CACHE_NAME = "ootd-diary-v1";
-const APP_SHELL = ["/", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"];
+const CACHE_NAME = "ootd-diary-v2";
+const APP_BASE = new URL("./", self.location.href);
+const APP_SHELL = ["", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"]
+  .map((path) => new URL(path, APP_BASE).href);
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -20,9 +22,9 @@ self.addEventListener("activate", (event) => {
 // 날씨 API(open-meteo 등)는 항상 네트워크 우선, 그 외 정적 파일은 캐시 우선
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
-  const isApi = url.hostname.includes("open-meteo.com") || url.hostname.includes("bigdatacloud.net");
+  const isApi = url.origin !== self.location.origin || url.pathname.includes("/api/");
 
-  if (isApi) return; // API 요청은 캐싱 없이 그대로 네트워크로 보냄
+  if (isApi || event.request.method !== "GET") return;
 
   event.respondWith(
     caches.match(event.request).then((cached) => {

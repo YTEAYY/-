@@ -817,13 +817,27 @@ export default function App() {
         wardrobe,
       })
     : null;
+  const aiRequestKey = JSON.stringify({
+    status: weather.status,
+    temp: effTemp,
+    feels: effFeels,
+    pop: effPop,
+    humidity: effHumidity,
+    wind: effWind,
+    weatherCode: effWeatherCode,
+    aqiLabel: aqi?.label,
+    band: localRec?.band,
+    profile,
+    wardrobe,
+  });
+  const currentAiRec = aiRec?.key === aiRequestKey ? aiRec.data : null;
   // AI(Gemini)가 응답을 준 경우 items/tips만 AI 결과로 교체하고, band/eng/desc 등은 그대로 로컬 계산을 사용한다.
   // AI 호출이 아직 안 끝났거나 실패하면 자연스럽게 로컬 규칙 기반 추천이 그대로 보인다.
   const rec = localRec
     ? {
         ...localRec,
-        items: aiRec?.items?.length ? aiRec.items : localRec.items,
-        tips: aiRec?.tips?.length ? [...aiRec.tips] : [...localRec.tips],
+        items: currentAiRec?.items?.length ? currentAiRec.items : localRec.items,
+        tips: currentAiRec?.tips?.length ? [...currentAiRec.tips] : [...localRec.tips],
       }
     : null;
   const wardrobeOutfit = rec
@@ -894,11 +908,13 @@ export default function App() {
   // 날씨/프로필/옷장이 바뀔 때만 새로 호출하고, 응답이 늦게 와서 순서가 꼬이면 최신 요청 결과만 반영한다.
   useEffect(() => {
     if (weather.status !== "ok" || !localRec) {
+      aiRequestIdRef.current += 1;
       setAiRec(null);
       setAiStatus("idle");
       return;
     }
     const reqId = ++aiRequestIdRef.current;
+    setAiRec(null);
     setAiStatus("loading");
     fetch("/api/recommend", {
       method: "POST",
@@ -919,7 +935,7 @@ export default function App() {
       .then((response) => (response.ok ? response.json() : Promise.reject(new Error("bad status"))))
       .then((data) => {
         if (aiRequestIdRef.current !== reqId) return; // 이미 더 최신 요청이 나간 경우 무시
-        setAiRec(data);
+        setAiRec({ key: aiRequestKey, data });
         setAiStatus("done");
       })
       .catch(() => {
@@ -939,6 +955,7 @@ export default function App() {
     aqi?.label,
     profile,
     wardrobe,
+    aiRequestKey,
   ]);
 
   let rainAlert = null;
