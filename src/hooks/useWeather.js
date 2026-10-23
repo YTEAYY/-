@@ -49,6 +49,7 @@ function parseHourly(data, startIndex) {
 
 export function useWeather(fallbackLocation) {
   const [weather, setWeather] = useState(INITIAL_WEATHER);
+  const [locationNotice, setLocationNotice] = useState("");
   const [hourRange, setHourRange] = useState(8);
   const [selectedHour, setSelectedHour] = useState(0);
   const [showTomorrow, setShowTomorrow] = useState(false);
@@ -57,6 +58,7 @@ export function useWeather(fallbackLocation) {
   const fetchAll = useCallback((latitude, longitude, place, isGeo) => {
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
+    setLocationNotice(isGeo ? "현재 위치 날씨를 불러오고 있어요." : "");
     setWeather((current) => ({ ...current, status: "loading" }));
 
     const weatherPromise = fetch(
@@ -103,6 +105,7 @@ export function useWeather(fallbackLocation) {
           timezone: data.timezone || "UTC",
           timezoneAbbreviation: data.timezone_abbreviation || "",
         });
+        if (isGeo) setLocationNotice("");
         setHourRange(8);
         setSelectedHour(0);
         setShowTomorrow(false);
@@ -115,22 +118,32 @@ export function useWeather(fallbackLocation) {
   const requestLocation = useCallback(() => {
     if (!navigator.geolocation) {
       fetchAll(fallbackLocation.lat, fallbackLocation.lon, fallbackLocation.name, false);
+      setLocationNotice("이 브라우저에서는 위치를 사용할 수 없어 서울 날씨를 표시 중이에요. 지역 검색으로 원하는 곳을 선택할 수 있어요.");
       return;
     }
+    setLocationNotice("현재 위치를 확인하고 있어요.");
     setWeather({ ...INITIAL_WEATHER, place: "위치 확인 중" });
     navigator.geolocation.getCurrentPosition(
       (position) => fetchAll(position.coords.latitude, position.coords.longitude, "현재 위치", true),
-      () => fetchAll(fallbackLocation.lat, fallbackLocation.lon, fallbackLocation.name, false),
+      (error) => {
+        fetchAll(fallbackLocation.lat, fallbackLocation.lon, fallbackLocation.name, false);
+        const reason = error.code === 1
+          ? "위치 권한이 없어"
+          : "현재 위치를 확인하지 못해";
+        setLocationNotice(`${reason} 서울 날씨를 표시 중이에요. 지역 검색으로 원하는 곳을 선택하거나 브라우저의 위치 권한을 확인해주세요.`);
+      },
       { timeout: 15000, maximumAge: 5 * 60 * 1000, enableHighAccuracy: false }
     );
   }, [fallbackLocation, fetchAll]);
 
   useEffect(() => {
-    requestLocation();
-  }, [requestLocation]);
+    fetchAll(fallbackLocation.lat, fallbackLocation.lon, fallbackLocation.name, false);
+    setLocationNotice("서울 날씨를 표시 중이에요. 현재 위치를 사용하려면 위치 버튼을 눌러주세요.");
+  }, [fallbackLocation, fetchAll]);
 
   return {
     weather,
+    locationNotice,
     setWeather,
     fetchAll,
     requestLocation,

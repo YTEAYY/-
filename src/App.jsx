@@ -173,7 +173,7 @@ function GlobalStyle() {
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const MIN_PASSWORD_LENGTH = 8;
 
-function AuthPage({ onComplete, initialError = "" }) {
+function AuthPage({ onComplete, onGuest, initialError = "" }) {
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -290,8 +290,8 @@ function AuthPage({ onComplete, initialError = "" }) {
         </div>
 
         {!supabaseConfigured && (
-          <p role="alert" style={{ fontSize: 12.5, color: TOKENS.danger, lineHeight: 1.6, margin: "0 0 18px" }}>
-            Supabase 설정이 필요해요. 프로젝트 URL과 공개 anon 키를 환경 변수에 등록한 뒤 다시 배포해주세요.
+          <p role="status" style={{ fontSize: 12.5, color: TOKENS.fgDim, lineHeight: 1.6, margin: "0 0 18px" }}>
+            계정 로그인과 클라우드 동기화는 현재 사용할 수 없지만, 게스트로 앱을 둘러볼 수 있어요.
           </p>
         )}
         {error && <p role="alert" style={{ fontSize: 12.5, color: TOKENS.danger, lineHeight: 1.6, margin: "0 0 18px" }}>{error}</p>}
@@ -329,6 +329,14 @@ function AuthPage({ onComplete, initialError = "" }) {
             로그인으로 돌아가기
           </button>
         )}
+        <div style={{ borderTop: `1px solid ${TOKENS.rule}`, marginTop: 24, paddingTop: 18 }}>
+          <button type="button" onClick={onGuest} style={{ width: "100%", background: "none", border: `1px solid ${TOKENS.rule}`, color: TOKENS.fg, padding: "13px 0", fontFamily: TOKENS.fontDisplay, fontSize: 13, cursor: "pointer" }}>
+            회원가입 없이 둘러보기
+          </button>
+          <p style={{ color: TOKENS.fgDim, fontSize: 11.5, lineHeight: 1.6, margin: "9px 0 0", textAlign: "center" }}>
+            게스트 데이터는 이 기기에만 저장돼요.
+          </p>
+        </div>
       </main>
     </div>
   );
@@ -398,6 +406,7 @@ function PasswordRecoveryPage({ onComplete }) {
    ============================================================ */
 export default function App() {
   const [authUser, setAuthUser] = useState(null);
+  const [isGuest, setIsGuest] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState("");
   const [isDataReady, setIsDataReady] = useState(false);
@@ -422,6 +431,7 @@ export default function App() {
     weather,
     fetchAll,
     requestLocation,
+    locationNotice,
     hourRange,
     setHourRange,
     selectedHour,
@@ -466,6 +476,7 @@ export default function App() {
 
     const requestId = hydrationRef.current.requestId + 1;
     hydrationRef.current = { userId: user.id, requestId, promise: null };
+    setIsGuest(false);
     dataReadyRef.current = false;
     setAuthUser(user);
     setAuthError("");
@@ -504,6 +515,19 @@ export default function App() {
     hydrationRef.current.promise = promise;
     return promise;
   }, []);
+
+  function startGuestMode() {
+    setStorageScope(null);
+    const appData = normalizeAppData(loadCurrentAppData());
+    setRecords(appData.records);
+    setProfile(appData.profile);
+    setFavorites(appData.favorites);
+    setWardrobe(appData.wardrobe);
+    setUnit(appData.unit);
+    setColorSchemeState(appData.colorScheme);
+    setIsGuest(true);
+    setAuthError("");
+  }
 
   const clearAuthenticatedUser = useCallback(() => {
     hydrationRef.current = { userId: null, requestId: hydrationRef.current.requestId + 1, promise: null };
@@ -973,8 +997,8 @@ export default function App() {
       </div>
     );
   }
-  if (!authUser) {
-    return <AuthPage initialError={authError} onComplete={hydrateUserData} />;
+  if (!authUser && !isGuest) {
+    return <AuthPage initialError={authError} onComplete={hydrateUserData} onGuest={startGuestMode} />;
   }
   if (passwordRecovery) {
     return <PasswordRecoveryPage onComplete={() => setPasswordRecovery(false)} />;
@@ -1010,6 +1034,8 @@ export default function App() {
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <button
               onClick={requestLocation}
+              aria-label="현재 위치 날씨 불러오기"
+              title="현재 위치 날씨 불러오기"
               style={{
                 background: "none",
                 border: "none",
@@ -1056,12 +1082,28 @@ export default function App() {
           </span>
         </div>
 
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, paddingTop: 10, color: TOKENS.fgDim, fontSize: 11 }}>
-          <span>{authUser.email}</span>
-          <span role="status">
-            {dataSyncStatus === "saving" ? "클라우드 저장 중…" : dataSyncStatus === "error" ? "클라우드 저장 실패" : "클라우드 저장됨"}
-          </span>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, paddingTop: 10, color: TOKENS.fgDim, fontSize: 11 }}>
+          {isGuest ? (
+            <>
+              <span>게스트 · 이 기기에 저장</span>
+              <button type="button" onClick={() => setIsGuest(false)} style={{ background: "none", border: "none", color: TOKENS.accent, textDecoration: "underline", cursor: "pointer", fontSize: 11, padding: 0 }}>
+                로그인 / 계정 만들기
+              </button>
+            </>
+          ) : (
+            <>
+              <span>{authUser.email}</span>
+              <span role="status">
+                {dataSyncStatus === "saving" ? "클라우드 저장 중…" : dataSyncStatus === "error" ? "클라우드 저장 실패" : "클라우드 저장됨"}
+              </span>
+            </>
+          )}
         </div>
+        {locationNotice && (
+          <p role="status" style={{ margin: "8px 0 0", color: TOKENS.fgDim, fontSize: 11.5, lineHeight: 1.6 }}>
+            {locationNotice}
+          </p>
+        )}
         {authError && dataSyncStatus === "error" && (
           <div role="alert" style={{ padding: "8px 0 0", color: TOKENS.danger, fontSize: 11.5, lineHeight: 1.6 }}>
             {authError}
@@ -1109,12 +1151,14 @@ export default function App() {
           >
             마이페이지
           </button>
-          <button
-            onClick={logout}
-            style={{ flex: 1, background: "none", border: `1px solid ${TOKENS.rule}`, color: TOKENS.fgDim, padding: "8px 0", fontFamily: TOKENS.fontDisplay, fontSize: 11.5, cursor: "pointer" }}
-          >
-            로그아웃
-          </button>
+          {!isGuest && (
+            <button
+              onClick={logout}
+              style={{ flex: 1, background: "none", border: `1px solid ${TOKENS.rule}`, color: TOKENS.fgDim, padding: "8px 0", fontFamily: TOKENS.fontDisplay, fontSize: 11.5, cursor: "pointer" }}
+            >
+              로그아웃
+            </button>
+          )}
         </div>
 
         {weather.status === "ok" && (
