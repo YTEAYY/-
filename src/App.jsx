@@ -44,6 +44,7 @@ import RecordSheetComponent from "./components/RecordSheet";
 import { CATEGORY_LABEL } from "./lib/wardrobe";
 
 const SEOUL = { lat: 37.5665, lon: 126.978, name: "SEOUL" };
+const GUEST_MIGRATION_KEY = "ootd-guest-migration-pending";
 
 const WEEK_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
 
@@ -68,6 +69,24 @@ function isHoliday(dateStr, dynamicMap) {
 }
 function holidayName(dateStr, dynamicMap) {
   return dynamicMap?.[dateStr] || null;
+}
+
+function setGuestMigrationPending(pending) {
+  try {
+    if (pending) localStorage.setItem(GUEST_MIGRATION_KEY, "true");
+    else localStorage.removeItem(GUEST_MIGRATION_KEY);
+  } catch (error) {
+    console.error("게스트 데이터 이전 상태를 저장하지 못했어요.", error);
+  }
+}
+
+function hasPendingGuestMigration() {
+  try {
+    return localStorage.getItem(GUEST_MIGRATION_KEY) === "true";
+  } catch (error) {
+    console.error("게스트 데이터 이전 상태를 확인하지 못했어요.", error);
+    return false;
+  }
 }
 
 function outfitShareText(rec, weather, place) {
@@ -97,57 +116,6 @@ async function shareOutfit(rec, weather, place, onFallback) {
   } catch (error) {
     onFallback?.(`공유하지 못했어요. (${error?.message || "이 브라우저는 공유를 지원하지 않아요."})`);
   }
-}
-
-function exportBackup(records, profile, favorites, wardrobe, unit, colorScheme) {
-  const payload = {
-    exportedAt: new Date().toISOString(),
-    app: "ootd-weather-diary",
-    version: 2,
-    records,
-    profile,
-    favorites,
-    wardrobe,
-    unit,
-    colorScheme,
-  };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `오늘뭐입지-백업-${fmtDate(new Date())}.json`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
-// 백업 JSON을 읽어서 파싱한다. 형식이 다르면 null을 반환한다.
-function parseBackupFile(file) {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const data = JSON.parse(reader.result);
-        if (
-          data
-          && typeof data === "object"
-          && !Array.isArray(data)
-          && data.records
-          && typeof data.records === "object"
-          && !Array.isArray(data.records)
-        ) {
-          resolve(data);
-        } else {
-          resolve(null);
-        }
-      } catch (e) {
-        resolve(null);
-      }
-    };
-    reader.onerror = () => resolve(null);
-    reader.readAsText(file);
-  });
 }
 
 // 현재 날씨와 시간에 맞는 회색 픽토그램을 표시한다.
@@ -353,6 +321,35 @@ function hasAppData(data) {
   );
 }
 
+function mergeGuestData(guestData, accountData, preferAccountSettings) {
+  const favorites = new Map();
+  [...guestData.favorites, ...accountData.favorites].forEach((favorite) => {
+    const key = JSON.stringify([favorite.name, favorite.latitude, favorite.longitude]);
+    favorites.set(key, favorite);
+  });
+  const wardrobe = new Map();
+  [...guestData.wardrobe, ...accountData.wardrobe].forEach((item) => {
+    if (item && typeof item.id === "string") wardrobe.set(item.id, item);
+  });
+  const accountProfileHasData = Boolean(
+    accountData.profile.gender
+    || accountData.profile.age
+    || accountData.profile.birthday
+    || accountData.profile.health?.length
+    || accountData.profile.healthOther
+  );
+
+  return normalizeAppData({
+    ...accountData,
+    records: { ...guestData.records, ...accountData.records },
+    profile: accountProfileHasData ? accountData.profile : guestData.profile,
+    favorites: [...favorites.values()],
+    wardrobe: [...wardrobe.values()],
+    unit: preferAccountSettings ? accountData.unit : guestData.unit,
+    colorScheme: preferAccountSettings ? accountData.colorScheme : guestData.colorScheme,
+  });
+}
+
 function PasswordRecoveryPage({ onComplete }) {
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
@@ -449,17 +446,16 @@ export default function App() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [logoutOpen, setLogoutOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [backupOpen, setBackupOpen] = useState(false);
-  const [importMsg, setImportMsg] = useState("");
+  const [guestDataImported, setGuestDataImported] = useState(false);
   const [shareMsg, setShareMsg] = useState("");
   const [holidays, setHolidays] = useState({});
   const [holidayErrors, setHolidayErrors] = useState({});
   const [now, setNow] = useState(() => new Date());
-  const importInputRef = useRef(null);
   const hourlyScrollRef = useRef(null);
   const hourlyDragRef = useRef({ active: false, startX: 0, scrollLeft: 0 });
   const aiRequestIdRef = useRef(0);
   const hydrationRef = useRef({ userId: null, requestId: 0, promise: null });
+  const pendingGuestDataRef = useRef(null);
   const dataReadyRef = useRef(false);
   const syncQueueRef = useRef(Promise.resolve());
   const syncTimerRef = useRef(null);
@@ -477,6 +473,7 @@ export default function App() {
     const requestId = hydrationRef.current.requestId + 1;
     hydrationRef.current = { userId: user.id, requestId, promise: null };
     setIsGuest(false);
+    setGuestDataImported(false);
     dataReadyRef.current = false;
     setAuthUser(user);
     setAuthError("");
@@ -487,11 +484,21 @@ export default function App() {
     const promise = (async () => {
       const cachedData = normalizeAppData(loadCurrentAppData());
       const cloudData = await loadCloudData(user.id);
-      const appData = cloudData || (hasAppData(cachedData) ? cachedData : normalizeAppData(loadLegacyAppData()));
-      if (!cloudData) await saveCloudData(user.id, appData);
+      const accountData = cloudData || (hasAppData(cachedData) ? cachedData : normalizeAppData(loadLegacyAppData()));
+      const guestData = pendingGuestDataRef.current
+        || (hasPendingGuestMigration() ? normalizeAppData(loadLegacyAppData()) : null);
+      const appData = guestData
+        ? mergeGuestData(guestData, accountData, Boolean(cloudData) || hasAppData(cachedData))
+        : accountData;
+      if (!cloudData || guestData) await saveCloudData(user.id, appData);
       if (hydrationRef.current.requestId !== requestId) return;
 
       saveAppData(appData);
+      if (guestData) {
+        pendingGuestDataRef.current = null;
+        setGuestMigrationPending(false);
+        setGuestDataImported(true);
+      }
       setRecords(appData.records);
       setProfile(appData.profile);
       setFavorites(appData.favorites);
@@ -517,6 +524,8 @@ export default function App() {
   }, []);
 
   function startGuestMode() {
+    pendingGuestDataRef.current = null;
+    setGuestMigrationPending(false);
     setStorageScope(null);
     const appData = normalizeAppData(loadCurrentAppData());
     setRecords(appData.records);
@@ -526,7 +535,16 @@ export default function App() {
     setUnit(appData.unit);
     setColorSchemeState(appData.colorScheme);
     setIsGuest(true);
+    setGuestDataImported(false);
     setAuthError("");
+  }
+
+  function openAccountAccess() {
+    pendingGuestDataRef.current = isGuest
+      ? normalizeAppData({ records, profile, favorites, wardrobe, unit, colorScheme })
+      : null;
+    if (isGuest) setGuestMigrationPending(true);
+    setIsGuest(false);
   }
 
   const clearAuthenticatedUser = useCallback(() => {
@@ -537,6 +555,7 @@ export default function App() {
     setAuthError("");
     setIsDataReady(false);
     setDataSyncStatus("synced");
+    setGuestDataImported(false);
     setRecords({});
     setProfile({ gender: "", age: "", health: [], healthOther: "", birthday: "" });
     setFavorites([]);
@@ -720,47 +739,6 @@ export default function App() {
     } finally {
       setLogoutSaving(false);
     }
-  }
-
-  function handleImportFile(event) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    parseBackupFile(file).then((data) => {
-      if (!data) {
-        setImportMsg("파일을 읽을 수 없어요. 이 앱에서 내보낸 백업 파일인지 확인해주세요.");
-        return;
-      }
-      const mergedRecords = { ...records, ...data.records };
-      persist(mergedRecords);
-      if (data.profile) {
-        setProfile(data.profile);
-        saveProfile(data.profile);
-      }
-      if (Array.isArray(data.favorites)) {
-        setFavorites(data.favorites);
-        saveFavorites(data.favorites);
-      }
-      if (Array.isArray(data.wardrobe)) {
-        const currentById = new Map(wardrobe.map((item) => [item.id, item]));
-        data.wardrobe.forEach((item) => {
-          if (item && typeof item.id === "string") currentById.set(item.id, item);
-        });
-        const mergedWardrobe = [...currentById.values()];
-        setWardrobe(mergedWardrobe);
-        saveWardrobe(mergedWardrobe);
-      }
-      if (data.unit === "C" || data.unit === "F") {
-        setUnit(data.unit);
-        saveUnit(data.unit);
-      }
-      if (data.colorScheme === "dark" || data.colorScheme === "light") {
-        setColorSchemeState(data.colorScheme);
-      }
-      setImportMsg(`불러오기 완료 (기록 ${Object.keys(data.records || {}).length}일치 반영)`);
-    }).catch((error) => {
-      setImportMsg(`백업을 불러오지 못했어요. (${error?.message || "파일을 확인해주세요."})`);
-    });
   }
 
   function startHourlyDrag(event) {
@@ -1086,7 +1064,7 @@ export default function App() {
           {isGuest ? (
             <>
               <span>게스트 · 이 기기에 저장</span>
-              <button type="button" onClick={() => setIsGuest(false)} style={{ background: "none", border: "none", color: TOKENS.accent, textDecoration: "underline", cursor: "pointer", fontSize: 11, padding: 0 }}>
+              <button type="button" onClick={openAccountAccess} style={{ background: "none", border: "none", color: TOKENS.accent, textDecoration: "underline", cursor: "pointer", fontSize: 11, padding: 0 }}>
                 로그인 / 계정 만들기
               </button>
             </>
@@ -1099,6 +1077,11 @@ export default function App() {
             </>
           )}
         </div>
+        {guestDataImported && !isGuest && (
+          <p role="status" style={{ margin: "8px 0 0", color: TOKENS.accent, fontSize: 11.5, lineHeight: 1.6 }}>
+            게스트 기록을 계정에 합쳤어요. 같은 날짜에 기록이 있으면 계정 기록을 유지했어요.
+          </p>
+        )}
         {locationNotice && (
           <p role="status" style={{ margin: "8px 0 0", color: TOKENS.fgDim, fontSize: 11.5, lineHeight: 1.6 }}>
             {locationNotice}
@@ -1923,56 +1906,6 @@ export default function App() {
           </div>
         )}
 
-        <SectionToggle label="데이터 백업" open={backupOpen} onClick={() => setBackupOpen((v) => !v)} />
-        {backupOpen && (
-          <div style={{ padding: "18px 0" }}>
-            <p style={{ fontSize: 12.5, color: TOKENS.fgDim, lineHeight: 1.6, marginTop: 0, marginBottom: 16 }}>
-              기록, 프로필, 옷장, 단위와 테마를 백업 파일로 저장해요. 로그인 계정은 클라우드에 동기화되지만, 기기 변경 등에 대비해 백업 파일을 따로 보관할 수 있어요.
-            </p>
-            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-              <button
-                onClick={() => exportBackup(records, profile, favorites, wardrobe, unit, colorScheme)}
-                style={{
-                  flex: 1,
-                  background: "none",
-                  border: `1px solid ${TOKENS.rule}`,
-                  color: TOKENS.fg,
-                  padding: "11px 0",
-                  fontFamily: TOKENS.fontDisplay,
-                  fontSize: 12.5,
-                  letterSpacing: "0.04em",
-                  cursor: "pointer",
-                }}
-              >
-                내보내기
-              </button>
-              <button
-                onClick={() => importInputRef.current?.click()}
-                style={{
-                  flex: 1,
-                  background: "none",
-                  border: `1px solid ${TOKENS.rule}`,
-                  color: TOKENS.fg,
-                  padding: "11px 0",
-                  fontFamily: TOKENS.fontDisplay,
-                  fontSize: 12.5,
-                  letterSpacing: "0.04em",
-                  cursor: "pointer",
-                }}
-              >
-                가져오기
-              </button>
-              <input
-                ref={importInputRef}
-                type="file"
-                accept="application/json"
-                onChange={handleImportFile}
-                style={{ display: "none" }}
-              />
-            </div>
-            {importMsg && <p style={{ fontSize: 12, color: TOKENS.accent, margin: 0 }}>{importMsg}</p>}
-          </div>
-        )}
       </div>
 
       {sheetDate && (
