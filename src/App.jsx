@@ -36,6 +36,7 @@ import {
   wardrobeOutfitFor,
 } from "./lib/recommendation";
 import { analyzeRecords } from "./lib/recordAnalysis";
+import { getColorPaletteOptions } from "./lib/colorRecommendation";
 import { Eyebrow, FeelingMark, SectionToggle } from "./components/common";
 import ProfileSheetComponent from "./components/ProfileSheet";
 import { LocationSearchSheet as LocationSearchSheetComponent, RecordSearchSheet as RecordSearchSheetComponent } from "./components/SearchSheets";
@@ -422,6 +423,7 @@ export default function App() {
   }, [colorScheme]);
   const [checkedOutingItems, setCheckedOutingItems] = useState({});
   const [wardrobeOutfitIndex, setWardrobeOutfitIndex] = useState(0);
+  const [colorPaletteIndex, setColorPaletteIndex] = useState(0);
   const [wardrobeOpen, setWardrobeOpen] = useState(false);
   const [searchSheetOpen, setSearchSheetOpen] = useState(false);
   const {
@@ -702,6 +704,11 @@ export default function App() {
     setWardrobe(next);
     saveWardrobe(next);
   }
+  function updateWardrobeItem(id, changes) {
+    const next = wardrobe.map((item) => (item.id === id ? { ...item, ...changes } : item));
+    setWardrobe(next);
+    saveWardrobe(next);
+  }
   function toggleUnit() {
     const next = unit === "C" ? "F" : "C";
     setUnit(next);
@@ -845,6 +852,8 @@ export default function App() {
   const wardrobeOutfit = rec
     ? wardrobeOutfitFor(wardrobe, rec.band, wardrobeOutfitIndex, effWeatherCode)
     : null;
+  const colorPaletteOptions = getColorPaletteOptions(wardrobeOutfit?.entries || []);
+  const colorPalette = colorPaletteOptions.options[colorPaletteIndex % colorPaletteOptions.options.length];
   if (rec && SNOW_WEATHER_CODES.has(effWeatherCode)) {
     rec.items = [
       ...rec.items.filter((item) => item.cat !== "shoes" && item.cat !== "acc"),
@@ -1662,6 +1671,44 @@ export default function App() {
               <div style={{ borderTop: `1px solid ${TOKENS.rule}` }} />
             </div>
 
+            <section
+              aria-label="오늘의 색 조합 추천"
+              style={{
+                background: TOKENS.bgRaised,
+                border: `1px solid ${TOKENS.rule}`,
+                padding: "16px 14px",
+                marginTop: 18,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                <div>
+                  <Eyebrow style={{ color: TOKENS.accent, marginBottom: 4 }}>COLOR HARMONY</Eyebrow>
+                  <div style={{ fontFamily: TOKENS.fontDisplay, fontSize: 18, fontWeight: 700 }}>오늘의 색 조합</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setColorPaletteIndex((index) => (index + 1) % colorPaletteOptions.options.length)}
+                  style={{ background: "none", border: `1px solid ${TOKENS.rule}`, color: TOKENS.fgMid, padding: "7px 9px", fontFamily: TOKENS.fontDisplay, fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" }}
+                >
+                  다른 조합 보기 ↻
+                </button>
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>{colorPalette.name}</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {colorPalette.colors.map((color) => (
+                  <span key={color.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, border: `1px solid ${TOKENS.rule}`, padding: "6px 9px", color: TOKENS.fgMid, fontSize: 11.5 }}>
+                    <span aria-hidden="true" style={{ width: 14, height: 14, borderRadius: "50%", background: color.hex, border: `1px solid ${TOKENS.rule}` }} />
+                    {color.name}
+                  </span>
+                ))}
+              </div>
+              <p style={{ color: TOKENS.fgDim, fontSize: 11.5, lineHeight: 1.5, margin: "10px 0 0" }}>
+                {colorPaletteOptions.isWardrobeBased
+                  ? "오늘 코디로 선택된 내 옷의 색과 어울리도록 골랐어요."
+                  : "차분한 기본색에 포인트색을 더한 조합이에요. 옷장에 색을 등록하면 내 옷 기준으로 추천해요."}
+              </p>
+            </section>
+
             {rec.tips.length > 0 && (
               <div style={{ marginTop: 32, paddingTop: 20, borderTop: `1px solid ${TOKENS.accent}` }}>
                 <Eyebrow style={{ color: TOKENS.accent, letterSpacing: "0.18em", marginBottom: 10 }}>TIP</Eyebrow>
@@ -1922,7 +1969,7 @@ export default function App() {
             setSheetDate(null);
           }}
         />
-      )}
+      )} 
       {profileOpen && (
         <ProfileSheetComponent
           existing={profile}
@@ -1949,6 +1996,7 @@ export default function App() {
         <WardrobeSheetComponent
           wardrobe={wardrobe}
           onAdd={addWardrobeItem}
+          onUpdate={updateWardrobeItem}
           onRemove={removeWardrobeItem}
           onClose={() => setWardrobeOpen(false)}
         />
