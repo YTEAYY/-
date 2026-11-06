@@ -121,11 +121,17 @@ export function useWeather(fallbackLocation) {
       setLocationNotice("이 브라우저에서는 위치를 사용할 수 없어 서울 날씨를 표시 중이에요. 지역 검색으로 원하는 곳을 선택할 수 있어요.");
       return;
     }
+    const requestId = requestRef.current + 1;
+    requestRef.current = requestId;
     setLocationNotice("현재 위치를 확인하고 있어요.");
     setWeather({ ...INITIAL_WEATHER, place: "위치 확인 중" });
     navigator.geolocation.getCurrentPosition(
-      (position) => fetchAll(position.coords.latitude, position.coords.longitude, "현재 위치", true),
+      (position) => {
+        if (requestId !== requestRef.current) return;
+        fetchAll(position.coords.latitude, position.coords.longitude, "현재 위치", true);
+      },
       (error) => {
+        if (requestId !== requestRef.current) return;
         fetchAll(fallbackLocation.lat, fallbackLocation.lon, fallbackLocation.name, false);
         const reason = error.code === 1
           ? "위치 권한이 없어"

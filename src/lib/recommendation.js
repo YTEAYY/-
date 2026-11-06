@@ -255,9 +255,9 @@ export function weatherAlerts(weatherCode, temp, feels, humidity, wind, pop) {
   const isHeavyRain = [65, 82].includes(weatherCode);
   const isStorm = THUNDER_WEATHER_CODES.has(weatherCode);
 
-  if (isStorm || wind >= 17.2) alerts.push({ symbol: "⚠", label: "강풍 주의" });
+  if (wind >= 17.2) alerts.push({ symbol: "⚠", label: "강풍 주의" });
   if (isHeavyRain) alerts.push({ symbol: "╱╱", label: "폭우 주의" });
-  if (isStorm) alerts.push({ symbol: "ϟ", label: "폭풍우 주의" });
+  if (isStorm) alerts.push({ symbol: "ϟ", label: "천둥번개 주의" });
   if (SNOW_WEATHER_CODES.has(weatherCode)) alerts.push({ symbol: "❄", label: "눈길 미끄럼 주의" });
   if (temp <= -10 || feels <= -15) alerts.push({ symbol: "❄", label: "한파 주의" });
   if (temp >= 33 || feels >= 35) alerts.push({ symbol: "☀", label: "폭염 주의" });

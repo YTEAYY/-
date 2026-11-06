@@ -814,6 +814,8 @@ export default function App() {
   const effHumidity = effectiveHour?.humidity ?? weather.humidity;
   const effWind = effectiveHour?.wind ?? weather.wind;
   const effWeatherCode = effectiveHour?.weatherCode ?? weather.weatherCode;
+  const displayedMin = showTomorrow ? weather.tomorrowMin : weather.todayMin;
+  const displayedMax = showTomorrow ? weather.tomorrowMax : weather.todayMax;
   const localRec = weather.status === "ok"
     ? outfitFor({
         feels: effFeels,
@@ -908,10 +910,10 @@ export default function App() {
     }
   }
 
-  if (rec && weather.status === "ok" && weather.todayMin != null && weather.todayMax != null) {
-    const spread = weather.todayMax - weather.todayMin;
+  if (rec && weather.status === "ok" && displayedMin != null && displayedMax != null) {
+    const spread = displayedMax - displayedMin;
     if (spread >= 8) {
-      rec.tips.push(`오늘 일교차가 커요 (최저 ${Math.round(weather.todayMin)}° · 최고 ${Math.round(weather.todayMax)}°). 아침저녁엔 겉옷을 챙기고 낮엔 벗을 수 있게 준비하세요.`);
+      rec.tips.push(`${showTomorrow ? "내일" : "오늘"} 일교차가 커요 (최저 ${Math.round(displayedMin)}° · 최고 ${Math.round(displayedMax)}°). 아침저녁엔 겉옷을 챙기고 낮엔 벗을 수 있게 준비하세요.`);
     }
   }
 
@@ -970,9 +972,11 @@ export default function App() {
   ]);
 
   let rainAlert = null;
-  if (weather.status === "ok" && weather.hourly && weather.pop < 40) {
-    const upcoming = weather.hourly.find((h, i) => i > 0 && i <= 16 && h.pop >= 50);
-    if (upcoming) rainAlert = `${upcoming.hour}시쯤 비 소식`;
+  if (weather.status === "ok" && displayedHourly && effPop < 40) {
+    const upcoming = displayedHourly.find((hour, index) => (
+      index > selectedHour && index <= selectedHour + 16 && hour.pop >= 50
+    ));
+    if (upcoming) rainAlert = `${showTomorrow ? "내일 " : ""}${upcoming.hour}시쯤 비 소식`;
   }
   const recordedThisMonth = Object.keys(records).filter((k) => k.startsWith(`${year}-${pad(month + 1)}`)).length;
 
@@ -990,7 +994,7 @@ export default function App() {
   if (passwordRecovery) {
     return <PasswordRecoveryPage onComplete={() => setPasswordRecovery(false)} />;
   }
-  if (!isDataReady) {
+  if (authUser && !isDataReady) {
     return (
       <div className="ootd-scope" style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: TOKENS.bg, color: TOKENS.fg }}>
         <GlobalStyle />
@@ -1243,9 +1247,9 @@ export default function App() {
                   {rec.desc}
                 </span>
               </div>
-              {weather.todayMin != null && weather.todayMax != null && (
+              {displayedMin != null && displayedMax != null && (
                 <div style={{ fontFamily: TOKENS.fontDisplay, fontSize: 13, color: TOKENS.fgMid, marginTop: 8, letterSpacing: "0.02em", maxWidth: "calc(100% - 104px)" }}>
-                  최저 {fmtTemp(weather.todayMin, unit)} · 최고 {fmtTemp(weather.todayMax, unit)}
+                  최저 {fmtTemp(displayedMin, unit)} · 최고 {fmtTemp(displayedMax, unit)}
                 </div>
               )}
             </div>
@@ -1526,7 +1530,7 @@ export default function App() {
                 )}
                 {displayedHourly[selectedHour] && (
                   <div style={{ marginTop: 8, fontSize: 12, color: TOKENS.fgDim }}>
-                    {!showTomorrow && selectedHour === 0 ? "지금" : `${displayedHourly[selectedHour].hour}시`} · {Math.round(displayedHourly[selectedHour].temp)}° · 강수확률{" "}
+                    {!showTomorrow && selectedHour === 0 ? "지금" : `${displayedHourly[selectedHour].hour}시`} · {fmtTemp(displayedHourly[selectedHour].temp, unit)} · 강수확률{" "}
                     {displayedHourly[selectedHour].pop}%
                   </div>
                 )}
@@ -1725,7 +1729,7 @@ export default function App() {
             <button
               onClick={() => {
                 setShareMsg("");
-                shareOutfit(rec, weather, weather.place, setShareMsg).catch((error) => {
+                shareOutfit(rec, { ...weather, temp: effTemp, feels: effFeels }, weather.place, setShareMsg).catch((error) => {
                   setShareMsg(`공유에 실패했어요. (${error?.message || "다시 시도해주세요."})`);
                 });
               }}

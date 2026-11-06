@@ -19,7 +19,13 @@ export default function ProfileSheet({ existing, onClose, onSave }) {
 
   function handleAgeChange(event) {
     const raw = event.target.value;
-    setAge(raw === "" ? "" : String(Math.max(1, Math.min(100, Number(raw)))));
+    if (raw === "") {
+      setAge("");
+      return;
+    }
+    const value = Number(raw);
+    if (!Number.isFinite(value)) return;
+    setAge(String(Math.max(1, Math.min(100, Math.trunc(value)))));
   }
 
   return (
