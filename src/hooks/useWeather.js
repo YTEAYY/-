@@ -29,7 +29,7 @@ function parseHourly(data, startIndex) {
       weatherCode: data.hourly.weather_code[startIndex + index],
     };
   };
-  const hourly = data.hourly.time.slice(startIndex, nextDayIndex + 1).map(toHour);
+  const hourly = data.hourly.time.slice(startIndex, nextDayIndex).map(toHour);
   const tomorrowHourly = data.hourly.time.slice(nextDayIndex, nextDayIndex + 24).map((time, index) => {
     const temp = data.hourly.temperature_2m[nextDayIndex + index];
     const humidity = data.hourly.relative_humidity_2m[nextDayIndex + index];
