@@ -42,7 +42,7 @@ import ProfileSheetComponent from "./components/ProfileSheet";
 import { LocationSearchSheet as LocationSearchSheetComponent, RecordSearchSheet as RecordSearchSheetComponent } from "./components/SearchSheets";
 import WardrobeSheetComponent from "./components/WardrobeSheet";
 import RecordSheetComponent from "./components/RecordSheet";
-import { CATEGORY_LABEL } from "./lib/wardrobe";
+import { CATEGORY_LABEL, CATEGORY_ORDER } from "./lib/wardrobe";
 
 const SEOUL = { lat: 37.5665, lon: 126.978, name: "SEOUL" };
 const GUEST_MIGRATION_KEY = "ootd-guest-migration-pending";
@@ -424,6 +424,7 @@ export default function App() {
   const [checkedOutingItems, setCheckedOutingItems] = useState({});
   const [wardrobeOutfitIndex, setWardrobeOutfitIndex] = useState(0);
   const [colorPaletteIndex, setColorPaletteIndex] = useState(0);
+  const [colorSelections, setColorSelections] = useState({ key: "", values: {} });
   const [wardrobeOpen, setWardrobeOpen] = useState(false);
   const [searchSheetOpen, setSearchSheetOpen] = useState(false);
   const {
@@ -856,6 +857,8 @@ export default function App() {
     : null;
   const colorPaletteOptions = getColorPaletteOptions(wardrobeOutfit?.entries || []);
   const colorPalette = colorPaletteOptions.options[colorPaletteIndex % colorPaletteOptions.options.length];
+  const colorSelectionKey = `${colorPalette.name}:${(wardrobeOutfit?.entries || []).map(({ category, item }) => `${category}-${item.id}`).join(",")}`;
+  const activeColorSelections = colorSelections.key === colorSelectionKey ? colorSelections.values : {};
   if (rec && SNOW_WEATHER_CODES.has(effWeatherCode)) {
     rec.items = [
       ...rec.items.filter((item) => item.cat !== "shoes" && item.cat !== "acc"),
@@ -1706,10 +1709,42 @@ export default function App() {
                   </span>
                 ))}
               </div>
+              <div style={{ marginTop: 16 }}>
+                <Eyebrow style={{ marginBottom: 8 }}>부위별 색상 선택</Eyebrow>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+                  {CATEGORY_ORDER.map((category, index) => {
+                    const recommendedColor = colorPalette.colors[index % colorPalette.colors.length];
+                    const selectedColorId = activeColorSelections[category] || recommendedColor.id;
+                    const selectedColor = colorPalette.colors.find((color) => color.id === selectedColorId) || recommendedColor;
+                    return (
+                      <label key={category} style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0, border: `1px solid ${TOKENS.rule}`, padding: "7px 8px" }}>
+                        <span aria-hidden="true" style={{ width: 14, height: 14, borderRadius: "50%", background: selectedColor.hex, border: `1px solid ${TOKENS.rule}`, flexShrink: 0 }} />
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ display: "block", color: TOKENS.fgDim, fontSize: 10.5 }}>{CATEGORY_LABEL[category]}</span>
+                          <select
+                            value={selectedColor.id}
+                            onChange={(event) => setColorSelections((current) => ({
+                              key: colorSelectionKey,
+                              values: {
+                                ...(current.key === colorSelectionKey ? current.values : {}),
+                                [category]: event.target.value,
+                              },
+                            }))}
+                            aria-label={`${CATEGORY_LABEL[category]} 색상 선택`}
+                            style={{ width: "100%", background: TOKENS.bgRaised, border: "none", color: TOKENS.fg, padding: "3px 0 0", fontFamily: TOKENS.fontBody, fontSize: 11.5 }}
+                          >
+                            {colorPalette.colors.map((color) => <option key={color.id} value={color.id}>{color.name}</option>)}
+                          </select>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
               <p style={{ color: TOKENS.fgDim, fontSize: 11.5, lineHeight: 1.5, margin: "10px 0 0" }}>
                 {colorPaletteOptions.isWardrobeBased
-                  ? "오늘 코디로 선택된 내 옷의 색과 어울리도록 골랐어요."
-                  : "차분한 기본색에 포인트색을 더한 조합이에요. 옷장에 색을 등록하면 내 옷 기준으로 추천해요."}
+                  ? "오늘 코디로 선택된 내 옷과 어울리는 조합이에요. 부위별 색상은 이 조합 안에서 바꿀 수 있어요."
+                  : "차분한 기본색에 포인트색을 더한 조합이에요. 부위별 색상은 추천 조합 안에서 선택할 수 있어요."}
               </p>
             </section>
 
