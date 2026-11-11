@@ -458,6 +458,7 @@ export default function App() {
   const hourlyDragRef = useRef({ active: false, startX: 0, scrollLeft: 0 });
   const aiRequestIdRef = useRef(0);
   const hydrationRef = useRef({ userId: null, requestId: 0, promise: null });
+  const guestModeRef = useRef(false);
   const pendingGuestDataRef = useRef(null);
   const dataReadyRef = useRef(false);
   const syncQueueRef = useRef(Promise.resolve());
@@ -487,6 +488,7 @@ export default function App() {
     const promise = (async () => {
       const cachedData = normalizeAppData(loadCurrentAppData());
       const cloudData = await loadCloudData(user.id);
+      if (hydrationRef.current.requestId !== requestId || guestModeRef.current) return;
       const accountData = cloudData || (hasAppData(cachedData) ? cachedData : normalizeAppData(loadLegacyAppData()));
       const guestData = pendingGuestDataRef.current
         || (hasPendingGuestMigration() ? normalizeAppData(loadLegacyAppData()) : null);
@@ -527,6 +529,9 @@ export default function App() {
   }, []);
 
   function startGuestMode() {
+    guestModeRef.current = true;
+    hydrationRef.current = { userId: null, requestId: hydrationRef.current.requestId + 1, promise: null };
+    dataReadyRef.current = false;
     pendingGuestDataRef.current = null;
     setGuestMigrationPending(false);
     setStorageScope(null);
@@ -537,12 +542,16 @@ export default function App() {
     setWardrobe(appData.wardrobe);
     setUnit(appData.unit);
     setColorSchemeState(appData.colorScheme);
+    setAuthUser(null);
+    setIsDataReady(false);
+    setAuthLoading(false);
     setIsGuest(true);
     setGuestDataImported(false);
     setAuthError("");
   }
 
   function openAccountAccess() {
+    guestModeRef.current = false;
     pendingGuestDataRef.current = isGuest
       ? normalizeAppData({ records, profile, favorites, wardrobe, unit, colorScheme })
       : null;
@@ -576,7 +585,8 @@ export default function App() {
 
     let active = true;
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-      if (!active) return;
+      if (!active || guestModeRef.current) return;
+      setAuthLoading(false);
       if (event === "PASSWORD_RECOVERY") setPasswordRecovery(true);
       if (session?.user) {
         setAuthUser(session.user);
@@ -588,7 +598,7 @@ export default function App() {
     });
 
     supabase.auth.getSession().then(({ data, error }) => {
-      if (!active) return;
+      if (!active || guestModeRef.current) return;
       if (error) {
         setAuthError(`로그인 상태를 확인하지 못했어요. (${error.message})`);
         setAuthLoading(false);
@@ -605,7 +615,7 @@ export default function App() {
           if (active) setAuthLoading(false);
         });
     }).catch((error) => {
-      if (!active) return;
+      if (!active || guestModeRef.current) return;
       setAuthError(`로그인 상태를 확인하지 못했어요. (${error?.message || "알 수 없는 오류"})`);
       setAuthLoading(false);
     });
@@ -987,7 +997,12 @@ export default function App() {
     return (
       <div className="ootd-scope" style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: TOKENS.bg, color: TOKENS.fg }}>
         <GlobalStyle />
-        <p role="status" style={{ color: TOKENS.fgMid, fontFamily: TOKENS.fontBody }}>로그인 상태를 확인하고 있어요…</p>
+        <main style={{ width: "100%", maxWidth: 430, padding: 24, fontFamily: TOKENS.fontBody, textAlign: "center" }}>
+          <p role="status" style={{ color: TOKENS.fgMid }}>로그인 상태를 확인하고 있어요…</p>
+          <button type="button" onClick={startGuestMode} style={{ width: "100%", marginTop: 16, background: "none", border: `1px solid ${TOKENS.rule}`, color: TOKENS.fg, padding: "13px 0", fontFamily: TOKENS.fontDisplay, fontSize: 13, cursor: "pointer" }}>
+            로그인 없이 바로 둘러보기
+          </button>
+        </main>
       </div>
     );
   }
